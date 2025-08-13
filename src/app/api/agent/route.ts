@@ -18,37 +18,52 @@ export async function POST(request: NextRequest) {
     
     // Get user session for Google Calendar access
     const session = await getServerSession(authOptions);
-    console.log('📅 Session found:', !!session, 'Access token:', !!session?.accessToken);
+    console.log('📅 Session check:', {
+      hasSession: !!session,
+      hasUser: !!session?.user,
+      hasAccessToken: !!session?.accessToken,
+      userEmail: session?.user?.email
+    });
     
     let travelContext = null;
     let calendarStatus = "Not connected";
     
-    // Step 1: Get real calendar data if user is authenticated
-    if (session?.accessToken) {
+    // Step 1: Try to get real calendar data if user is authenticated
+    if (session?.accessToken && session?.user) {
       try {
-        console.log('🔗 Attempting to connect to Google Calendar...');
+        console.log('🔗 Attempting to connect to Google Calendar with valid session...');
         const calendarMCP = new GoogleCalendarMCPServer(session.accessToken as string);
         travelContext = await calendarMCP.extractTravelEvents();
-        console.log('📋 Calendar data retrieved:', {
+        console.log('📋 Calendar data retrieved successfully:', {
           destination: travelContext.destination,
           eventCount: travelContext.events.length,
           startDate: travelContext.startDate
         });
         calendarStatus = `Connected - Found ${travelContext.events.length} travel events`;
       } catch (error) {
-        console.error('❌ Calendar MCP error:', error);
-        calendarStatus = `Connected but error: ${error.message}`;
+        console.error('❌ Calendar MCP error:', error.message);
+        console.log('🔄 Continuing with message extraction due to calendar auth error');
+        calendarStatus = `Connected but auth error - using message extraction`;
+        // Don't throw here, continue with extraction
+        travelContext = null;
       }
+    } else {
+      console.log('❌ No valid session or access token found');
+      calendarStatus = "Not authenticated - please sign in to Google Calendar";
     }
     
     // Step 2: If no real calendar data, extract from message
-    if (!travelContext || travelContext.events.length === 0) {
+    if (!travelContext || !travelContext.events || travelContext.events.length === 0) {
       console.log('📝 Extracting travel details from message');
       travelContext = extractTravelFromMessage(message);
       if (session?.accessToken) {
-        calendarStatus = "Connected - No travel events found, extracted from message";
+        if (calendarStatus.includes('auth error')) {
+          // Keep the auth error status
+        } else {
+          calendarStatus = "Connected - No travel events found, extracted from message";
+        }
       } else {
-        calendarStatus = "Demo mode - Extracted from message";
+        calendarStatus = "Demo mode - Not authenticated, extracted from message";
       }
     }
     
@@ -58,54 +73,53 @@ export async function POST(request: NextRequest) {
     if (travelContext.destination && travelContext.startDate) {
       console.log('✈️ Searching flights for:', travelContext.destination);
       
-      // Determine origin airport (you could make this dynamic based on user location)
-        // Determine origin airport (you could make this dynamic based on user location)
-        const origin = 'JFK'; // Default to New York, could be made configurable
+      // Determine origin airport
+      const origin = 'JFK'; // Default to New York
+      
+      // Smart date handling
+      let departureDate, returnDate;
 
-        // Smart date handling
-        let departureDate, returnDate;
-
-        if (travelContext.startDate) {
+      if (travelContext.startDate) {
         const startDate = new Date(travelContext.startDate);
         const endDate = travelContext.endDate ? new Date(travelContext.endDate) : null;
         
         // Check if dates are valid and not the same
         if (endDate && endDate.getTime() !== startDate.getTime() && endDate > startDate) {
-            departureDate = startDate.toISOString().split('T')[0];
-            returnDate = endDate.toISOString().split('T')[0];
+          departureDate = startDate.toISOString().split('T')[0];
+          returnDate = endDate.toISOString().split('T')[0];
         } else {
-            // If no valid return date, make it 7 days later
-            departureDate = startDate.toISOString().split('T')[0];
-            const returnDateObj = new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-            returnDate = returnDateObj.toISOString().split('T')[0];
+          // If no valid return date, make it 7 days later
+          departureDate = startDate.toISOString().split('T')[0];
+          const returnDateObj = new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+          returnDate = returnDateObj.toISOString().split('T')[0];
         }
-        } else {
+      } else {
         // If no start date, use today and 7 days later
         const today = new Date();
         departureDate = today.toISOString().split('T')[0];
         const weekLater = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
         returnDate = weekLater.toISOString().split('T')[0];
-        }
+      }
 
-        console.log('📅 Flight search dates:', { departureDate, returnDate });
+      console.log('📅 Flight search dates:', { departureDate, returnDate });
       
-        searchPromises.push(
-            amadeusFlightMCP.searchFlights(origin, travelContext.destination, departureDate, returnDate)
-              .then(flights => {
-                console.log('✈️ Flight search successful:', {
-                  origin: flights.origin,
-                  destination: flights.destination,
-                  departureDate: flights.departureDate,
-                  returnDate: flights.returnDate,
-                  offersFound: flights.offers.length
-                });
-                return { flights };
-              })
-              .catch(error => {
-                console.error('❌ Flight search failed:', error);
-                return { flights: null, flightError: error.message };
-              })
-          );
+      searchPromises.push(
+        amadeusFlightMCP.searchFlights(origin, travelContext.destination, departureDate, returnDate)
+          .then(flights => {
+            console.log('✈️ Flight search successful:', {
+              origin: flights.origin,
+              destination: flights.destination,
+              departureDate: flights.departureDate,
+              returnDate: flights.returnDate,
+              offersFound: flights.offers.length
+            });
+            return { flights };
+          })
+          .catch(error => {
+            console.error('❌ Flight search failed:', error);
+            return { flights: null, flightError: error.message };
+          })
+      );
     } else {
       searchPromises.push(Promise.resolve({ flights: null }));
     }
@@ -139,7 +153,7 @@ export async function POST(request: NextRequest) {
       // Calendar information
       calendar: {
         status: calendarStatus,
-        events: travelContext.events,
+        events: travelContext.events || [],
         destination: travelContext.destination,
         purpose: travelContext.purpose,
         startDate: travelContext.startDate,
@@ -153,7 +167,7 @@ export async function POST(request: NextRequest) {
         destination: flightResult.flights.destination,
         departureDate: flightResult.flights.departureDate,
         returnDate: flightResult.flights.returnDate,
-        offers: flightResult.flights.offers.slice(0, 3), // Top 3 options
+        offers: flightResult.flights.offers.slice(0, 4), // Top 4 options
         totalOptions: flightResult.flights.offers.length
       } : {
         status: 'error',
@@ -176,7 +190,7 @@ export async function POST(request: NextRequest) {
       
       // Metadata
       searchTime: new Date().toISOString(),
-      searchDuration: '2.3 seconds' // Could make this real
+      authenticationStatus: session?.user ? 'authenticated' : 'not_authenticated'
     };
     
     // Step 7: Generate intelligent response
@@ -186,11 +200,12 @@ export async function POST(request: NextRequest) {
       calendarEvents: completeTravelPlan.calendar.events.length,
       flightOptions: completeTravelPlan.flights.status === 'success' ? completeTravelPlan.flights.totalOptions : 0,
       colleagues: completeTravelPlan.colleagues.count,
-      linkedInConnections: completeTravelPlan.linkedIn.count
+      linkedInConnections: completeTravelPlan.linkedIn.count,
+      authStatus: completeTravelPlan.authenticationStatus
     });
     
     // Simulate AI processing time
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1500));
     
     return NextResponse.json({
       response,
@@ -246,117 +261,120 @@ function extractTravelFromMessage(message: string): any {
   };
 }
 
-// Helper function to generate comprehensive response
 // Helper function to generate intelligent response using Claude
-    async function generateComprehensiveResponse(message: string, travelPlan: any): Promise<string> {
-        try {
-        const { Anthropic } = await import('@anthropic-ai/sdk');
-        const anthropic = new Anthropic({
-            apiKey: process.env.ANTHROPIC_API_KEY!,
-        });
-    
-        const { calendar, flights, colleagues, linkedIn } = travelPlan;
-        
-        // Create rich context for Claude
-        const contextPrompt = `You are an AI travel assistant helping with trip planning. Here's what you found:
-    
-    USER MESSAGE: "${message}"
-    
-    CALENDAR ANALYSIS:
-    - Status: ${calendar.status}
-    - Events found: ${calendar.events.length}
-    - Destination: ${calendar.destination || 'Not specified'}
-    - Purpose: ${calendar.purpose || 'Not specified'}
-    ${calendar.events.length > 0 ? `- Key Event: "${calendar.events[0].summary}" from ${calendar.startDate} to ${calendar.endDate}` : ''}
-    
-    FLIGHT SEARCH:
-    - Status: ${flights.status}
-    ${flights.status === 'success' ? `- Found ${flights.totalOptions} flight options
-    - Best option: ${flights.offers[0].airline} for $${flights.offers[0].price.total}
-    - Route: ${flights.offers[0].departure.airport} → ${flights.offers[0].arrival.airport}
-    - Departure: ${flights.offers[0].departure.time}` : '- No flights found'}
-    
-    COLLEAGUES IN DESTINATION:
-    - Found ${colleagues.count} company colleagues
-    ${colleagues.list.slice(0, 3).map(c => `- ${c.name} (${c.role})`).join('\n')}
-    
-    LINKEDIN CONNECTIONS:
-    - Found ${linkedIn.count} LinkedIn connections in the area
-    ${linkedIn.list.slice(0, 3).map(c => `- ${c.name} (${c.role} at ${c.company})`).join('\n')}
-    
-    Provide a helpful, professional response that:
-    1. Acknowledges what you found in their calendar
-    2. Highlights the best flight options with specific details
-    3. Suggests meeting with relevant colleagues/connections
-    4. Offers to help with next steps (booking flights, scheduling meetings)
-    5. Keep it conversational and under 150 words
-    
-    Be specific about names, prices, and times when you have that data.`;
-    
-        console.log('🤖 Calling Claude API...');
-        
-        const response = await anthropic.messages.create({
-            model: "claude-3-haiku-20240307",
-            max_tokens: 300,
-            messages: [{
-            role: "user",
-            content: contextPrompt
-            }]
-        });
-    
-        // Properly extract the text from Claude's response
-        let claudeResponse = '';
-        if (response.content && response.content.length > 0) {
-            const firstContent = response.content[0];
-            if (firstContent.type === 'text') {
-            claudeResponse = firstContent.text;
-            }
-        }
-        
-        console.log('🤖 Claude AI response:', claudeResponse);
-        
-        // Return the text response, or fallback if empty
-        return claudeResponse || generateEnhancedFallbackResponse(message, travelPlan);
-        
-        } catch (error) {
-        console.error('❌ Claude API error:', error);
-        
-        // Fallback to enhanced template response if Claude API fails
-        return generateEnhancedFallbackResponse(message, travelPlan);
-        }
-    }
-  
-  // Enhanced fallback response (in case Claude API fails)
-  function generateEnhancedFallbackResponse(message: string, travelPlan: any): string {
+async function generateComprehensiveResponse(message: string, travelPlan: any): Promise<string> {
+  try {
+    const { Anthropic } = await import('@anthropic-ai/sdk');
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+    });
+
     const { calendar, flights, colleagues, linkedIn } = travelPlan;
     
-    let response = '';
+    // Create rich context for Claude
+    const contextPrompt = `You are an AI travel assistant helping with trip planning. Here's what you found:
+
+USER MESSAGE: "${message}"
+
+CALENDAR ANALYSIS:
+- Status: ${calendar.status}
+- Events found: ${calendar.events.length}
+- Destination: ${calendar.destination || 'Not specified'}
+- Purpose: ${calendar.purpose || 'Not specified'}
+${calendar.events.length > 0 ? `- Key Event: "${calendar.events[0].summary}" from ${calendar.startDate} to ${calendar.endDate}` : ''}
+
+FLIGHT SEARCH:
+- Status: ${flights.status}
+${flights.status === 'success' ? `- Found ${flights.totalOptions} flight options
+- Best option: ${flights.offers[0].airline} for $${flights.offers[0].price.total}
+- Route: ${flights.offers[0].departure.airport} → ${flights.offers[0].arrival.airport}
+- Departure: ${flights.offers[0].departure.time}` : '- No flights found'}
+
+COLLEAGUES IN DESTINATION:
+- Found ${colleagues.count} company colleagues
+${colleagues.list.slice(0, 3).map(c => `- ${c.name} (${c.role})`).join('\n')}
+
+LINKEDIN CONNECTIONS:
+- Found ${linkedIn.count} LinkedIn connections in the area
+${linkedIn.list.slice(0, 3).map(c => `- ${c.name} (${c.role} at ${c.company})`).join('\n')}
+
+Provide a helpful, professional response that:
+1. Acknowledges what you found in their calendar (or mention if auth issues)
+2. Highlights the best flight options with specific details
+3. Suggests meeting with relevant colleagues/connections
+4. Offers to help with next steps (booking flights, scheduling meetings)
+5. Keep it conversational and under 150 words
+
+Be specific about names, prices, and times when you have that data.`;
+
+    console.log('🤖 Calling Claude API...');
     
-    // Calendar section
-    if (calendar.events.length > 0) {
-      const event = calendar.events[0];
-      response += `Perfect! I found your "${event.summary}" in your calendar for ${calendar.destination}. `;
-    } else {
-      response += `I understand you're planning to travel to ${calendar.destination}. `;
+    const response = await anthropic.messages.create({
+      model: "claude-3-haiku-20240307",
+      max_tokens: 300,
+      messages: [{
+        role: "user",
+        content: contextPrompt
+      }]
+    });
+
+    // Properly extract the text from Claude's response
+    let claudeResponse = '';
+    if (response.content && response.content.length > 0) {
+      const firstContent = response.content[0];
+      if (firstContent.type === 'text') {
+        claudeResponse = firstContent.text;
+      }
     }
     
-    // Flight section with specific details
-    if (flights.status === 'success' && flights.offers.length > 0) {
-      const bestFlight = flights.offers[0];
-      response += `I found ${flights.totalOptions} flight options! The best value is ${bestFlight.airline} departing ${bestFlight.departure.airport} at ${new Date(bestFlight.departure.time).toLocaleTimeString()} for $${bestFlight.price.total}. `;
-    }
+    console.log('🤖 Claude AI response generated');
     
-    // Colleagues section
-    if (colleagues.count > 0) {
-      response += `I found ${colleagues.count} colleagues in ${calendar.destination}: ${colleagues.list.slice(0, 2).map(c => c.name).join(' and ')}. `;
-    }
+    // Return the text response, or fallback if empty
+    return claudeResponse || generateEnhancedFallbackResponse(message, travelPlan);
     
-    // LinkedIn section
-    if (linkedIn.count > 0) {
-      response += `Plus ${linkedIn.count} LinkedIn connections who you might want to meet with. `;
-    }
+  } catch (error) {
+    console.error('❌ Claude API error:', error);
     
-    response += `I can help you book flights and schedule meetings - what would you like to do next?`;
-    
-    return response;
+    // Fallback to enhanced template response if Claude API fails
+    return generateEnhancedFallbackResponse(message, travelPlan);
   }
+}
+
+// Enhanced fallback response (in case Claude API fails)
+function generateEnhancedFallbackResponse(message: string, travelPlan: any): string {
+  const { calendar, flights, colleagues, linkedIn } = travelPlan;
+  
+  let response = '';
+  
+  // Calendar section with auth status awareness
+  if (calendar.events.length > 0) {
+    const event = calendar.events[0];
+    response += `Perfect! I found your "${event.summary}" in your calendar for ${calendar.destination}. `;
+  } else if (calendar.status.includes('Not authenticated')) {
+    response += `I'd love to check your calendar for travel events! Please connect your Google Calendar, then I can find your specific trips. For now, I understand you're planning to travel to ${calendar.destination}. `;
+  } else if (calendar.status.includes('auth error')) {
+    response += `I had trouble accessing your calendar (authentication issue), but based on your message, I understand you're planning to travel to ${calendar.destination}. `;
+  } else {
+    response += `I checked your calendar but didn't find specific travel events. Based on your message, I understand you're planning to travel to ${calendar.destination}. `;
+  }
+  
+  // Flight section with specific details
+  if (flights.status === 'success' && flights.offers.length > 0) {
+    const bestFlight = flights.offers[0];
+    response += `I found ${flights.totalOptions} flight options! The best value is ${bestFlight.airline} departing ${bestFlight.departure.airport} at ${new Date(bestFlight.departure.time).toLocaleTimeString()} for $${bestFlight.price.total}. `;
+  }
+  
+  // Colleagues section
+  if (colleagues.count > 0) {
+    response += `I found ${colleagues.count} colleagues in ${calendar.destination}: ${colleagues.list.slice(0, 2).map(c => c.name).join(' and ')}. `;
+  }
+  
+  // LinkedIn section
+  if (linkedIn.count > 0) {
+    response += `Plus ${linkedIn.count} LinkedIn connections who you might want to meet with. `;
+  }
+  
+  response += `I can help you book flights and schedule meetings - what would you like to do next?`;
+  
+  return response;
+}

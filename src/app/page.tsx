@@ -43,71 +43,97 @@ export default function TravelAgent() {
     }
   }, [isInitialized]);
 
-  const signIn = () => {
-    window.location.href = '/api/auth/signin';
-  };
+  
+    const sendMessage = async () => {
+      if (!input.trim() || isLoading) return;
 
-  const sendMessage = async () => {
-    if (!input.trim() || isLoading) return;
+      const userMessage = {
+        role: 'user' as const,
+        content: input,
+        timestamp: new Date()
+      };
 
-    const userMessage = {
-      role: 'user' as const,
-      content: input,
-      timestamp: new Date()
+      setMessages(prev => [...prev, userMessage]);
+      setInput('');
+      setIsLoading(true);
+
+      try {
+        const response = await fetch('/api/agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: input })
+        });
+
+        const data = await response.json();
+        
+        setMessages(prev => [...prev, {
+          role: 'assistant' as const,
+          content: data.response || 'I\'m working on that for you!',
+          timestamp: new Date(),
+          data: data.travelPlan
+        }]);
+      } catch (error) {
+        setMessages(prev => [...prev, {
+          role: 'assistant' as const,
+          content: 'I\'m having trouble connecting right now. Let me help you with a demo response!',
+          timestamp: new Date()
+        }]);
+      } finally {
+        setIsLoading(false);
+      }
     };
 
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
-    setIsLoading(true);
-
-    try {
-      const response = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input })
-      });
-
-      const data = await response.json();
-      
-      setMessages(prev => [...prev, {
-        role: 'assistant' as const,
-        content: data.response || 'I\'m working on that for you!',
-        timestamp: new Date(),
-        data: data.travelPlan
-      }]);
-    } catch (error) {
-      setMessages(prev => [...prev, {
-        role: 'assistant' as const,
-        content: 'I\'m having trouble connecting right now. Let me help you with a demo response!',
-        timestamp: new Date()
-      }]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Auth button with proper connection status
-  const authButton = !isAuthenticated ? (
-    <div className="flex gap-2">
-      <button
-        onClick={signIn}
-        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-      >
-        <LogIn className="w-4 h-4" />
-        Connect Google Calendar
-      </button>
-    </div>
-  ) : (
-    <div className="flex items-center gap-2 text-green-600">
-      <Calendar className="w-4 h-4" />
-      <span className="text-sm">
-        Connected: {debugInfo?.user?.email} 
-        <span className="ml-2 text-xs bg-green-100 px-2 py-1 rounded">
-          Calendar Active
-        </span>
-      </span>
-    </div>
-  );
+    const signIn = () => {
+      window.location.href = '/api/auth/signin';
+    };
+    
+    const signOut = () => {
+      window.location.href = '/api/auth/signout';
+    };
+    
+  // Enhanced auth button with reconnect option
+    const authButton = !isAuthenticated ? (
+      <div className="flex gap-2">
+        <button
+          onClick={signIn}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          <LogIn className="w-4 h-4" />
+          Connect Google Calendar
+        </button>
+      </div>
+    ) : (
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 text-green-600">
+          <Calendar className="w-4 h-4" />
+          <span className="text-sm">
+            Connected: {debugInfo?.user?.email} 
+            <span className="ml-2 text-xs bg-green-100 px-2 py-1 rounded">
+              Calendar Active
+            </span>
+          </span>
+        </div>
+        
+        {/* Reconnect and Sign Out Options */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={signIn}
+            className="text-xs text-blue-600 hover:text-blue-800 underline"
+            title="Refresh calendar connection"
+          >
+            Reconnect
+          </button>
+          <span className="text-gray-300">|</span>
+          <button
+            onClick={signOut}
+            className="text-xs text-red-600 hover:text-red-800 underline"
+            title="Sign out of Google Calendar"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    );
 
   return (
     <div className="h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col">
