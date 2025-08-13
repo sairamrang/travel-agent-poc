@@ -1,0 +1,33 @@
+# Travel Agent POC - AI Assistant Rules
+
+This is a Travel Agent demonstration built with Next.js 14, TypeScript, and MCP (Model Context Protocol) servers.
+
+## Architecture Overview:
+- Frontend: Next.js 14 with App Router + TypeScript + Tailwind CSS
+- AI Agent: Claude API for orchestration and intelligence
+- MCP Servers: Google Calendar (real), Amadeus flights (real), Company Directory (mock), LinkedIn (mock)
+- UI: Professional chat interface with real-time responses
+
+## Development Guidelines:
+- Use TypeScript strictly with proper type definitions
+- Follow Next.js 14 App Router patterns (app/ directory)
+- Use Tailwind CSS for all styling
+- Create reusable components in src/components/
+- MCP servers go in src/lib/mcp/
+- API routes in src/app/api/
+
+## Key Features to Build:
+1. Real-time chat interface for travel planning
+2. Google Calendar integration (extract real travel events)
+3. Amadeus flight search (real flight data)
+4. Smart colleague and LinkedIn connection discovery
+5. Automated meeting scheduling
+
+## Code Style:
+- Functional components with hooks
+- Async/await for API calls
+- Error boundaries and graceful fallbacks
+- Mobile-responsive design
+- Professional, clean UI suitable for executive demos
+
+Focus on building impressive, working features that demonstrate the power of agentic systems.
