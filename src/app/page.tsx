@@ -176,7 +176,7 @@ export default function TravelAgent() {
                     <p className="text-sm leading-relaxed">{message.content}</p>
                     {message.data && (
                       <div className="mt-4 space-y-3">
-                        {/* Calendar Section */}
+                        {/* Enhanced Calendar Section with Timezone Intelligence */}
                         {message.data.calendar && (
                           <div className="p-3 bg-blue-50 rounded border-l-4 border-blue-400">
                             <div className="flex items-center gap-2 mb-2">
@@ -184,11 +184,72 @@ export default function TravelAgent() {
                               <span className="font-medium text-blue-800">
                                 Calendar Events ({message.data.calendar.events.length} found)
                               </span>
+                              {message.data.calendar.timezoneAnalysis && (
+                                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                                  🧠 Smart Analysis
+                                </span>
+                              )}
                             </div>
                             <p className="text-sm text-blue-700 mb-3">
                               Status: {message.data.calendar.status}
                             </p>
                             
+                            {/* Timezone Intelligence Section */}
+                            {message.data.calendar.timezoneAnalysis && (
+                              <div className="mb-4">
+                                {message.data.calendar.timezoneAnalysis.conflictCount > 0 ? (
+                                  <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-3">
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="text-sm font-medium text-yellow-800">
+                                        ⚠️ {message.data.calendar.timezoneAnalysis.conflictCount} Timezone Conflicts Detected
+                                      </span>
+                                      {message.data.calendar.timezoneAnalysis.highSeverityCount > 0 && (
+                                        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
+                                          {message.data.calendar.timezoneAnalysis.highSeverityCount} High Priority
+                                        </span>
+                                      )}
+                                    </div>
+                                    
+                                    {/* Show top 3 conflicts */}
+                                    <div className="space-y-2">
+                                      {message.data.calendar.timezoneAnalysis.conflicts.slice(0, 3).map((conflict: any, idx: number) => (
+                                        <div key={idx} className="bg-white rounded p-2 border border-yellow-200">
+                                          <div className="text-sm font-medium text-gray-900">
+                                            {conflict.event.summary}
+                                          </div>
+                                          <div className="text-xs text-gray-600 mt-1">
+                                            <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
+                                              conflict.severity === 'high' ? 'bg-red-500' : 
+                                              conflict.severity === 'medium' ? 'bg-yellow-500' : 'bg-green-500'
+                                            }`}></span>
+                                            {conflict.reason}
+                                          </div>
+                                          <div className="text-xs text-blue-600 mt-1">
+                                            💡 Best option: {conflict.rescheduleOptions[0]?.reason}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    
+                                    {/* Smart Recommendations */}
+                                    {message.data.calendar.timezoneAnalysis.recommendations.length > 0 && (
+                                      <div className="mt-3 pt-2 border-t border-yellow-200">
+                                        <div className="text-xs font-medium text-yellow-800 mb-1">Smart Recommendations:</div>
+                                        {message.data.calendar.timezoneAnalysis.recommendations.map((rec: string, idx: number) => (
+                                          <div key={idx} className="text-xs text-yellow-700">• {rec}</div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="bg-green-50 border border-green-200 rounded p-2 mb-3">
+                                    <span className="text-sm text-green-700">✅ No timezone conflicts detected - great scheduling!</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            
+                            {/* Calendar Events Table */}
                             {message.data.calendar.events.length > 0 && (
                               <div className="bg-white rounded border overflow-hidden">
                                 <table className="w-full text-xs">
@@ -197,18 +258,40 @@ export default function TravelAgent() {
                                       <th className="text-left p-2 font-medium">Event</th>
                                       <th className="text-left p-2 font-medium">Date</th>
                                       <th className="text-left p-2 font-medium">Location</th>
+                                      <th className="text-left p-2 font-medium">Status</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {message.data.calendar.events.map((event: any, idx: number) => (
-                                      <tr key={idx} className="border-t">
-                                        <td className="p-2 font-medium">{event.summary}</td>
-                                        <td className="p-2 text-gray-600">
-                                          {isInitialized ? new Date(event.start.dateTime).toLocaleDateString() : ''}
-                                        </td>
-                                        <td className="p-2 text-gray-600">{event.location || 'No location'}</td>
-                                      </tr>
-                                    ))}
+                                    {message.data.calendar.events.map((event: any, idx: number) => {
+                                      // Find if this event has a conflict
+                                      const conflict = message.data.calendar.timezoneAnalysis?.conflicts.find(
+                                        (c: any) => c.event.id === event.id
+                                      );
+                                      
+                                      return (
+                                        <tr key={idx} className="border-t">
+                                          <td className="p-2 font-medium">{event.summary}</td>
+                                          <td className="p-2 text-gray-600">
+                                            {isInitialized ? new Date(event.start.dateTime).toLocaleDateString() : ''}
+                                          </td>
+                                          <td className="p-2 text-gray-600">{event.location || 'No location'}</td>
+                                          <td className="p-2">
+                                            {conflict ? (
+                                              <span className={`text-xs px-2 py-1 rounded ${
+                                                conflict.severity === 'high' ? 'bg-red-100 text-red-700' :
+                                                conflict.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                'bg-blue-100 text-blue-700'
+                                              }`}>
+                                                {conflict.severity === 'high' ? '⚠️' : 
+                                                conflict.severity === 'medium' ? '⚡' : 'ℹ️'} {conflict.conflictType.replace('_', ' ')}
+                                              </span>
+                                            ) : (
+                                              <span className="text-xs text-green-600">✅ OK</span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </div>

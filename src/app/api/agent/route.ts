@@ -4,6 +4,7 @@ import { authOptions } from '../auth/[...nextauth]/route';
 import { GoogleCalendarMCPServer } from '@/lib/mcp/google-calendar-server';
 import { AmadeusFlightMCPServer } from '@/lib/mcp/amadeus-server';
 import { MockCompanyMCPServer, MockLinkedInMCPServer } from '@/lib/mcp/mock-servers';
+import { TimezoneReasoningEngine } from '@/lib/reasoning/timezone-engine';
 
 export async function POST(request: NextRequest) {
   try {
@@ -148,16 +149,60 @@ export async function POST(request: NextRequest) {
     console.log('🔄 Executing parallel searches...');
     const [flightResult, colleagueResult, connectionResult] = await Promise.all(searchPromises);
     
-    // Step 6: Compile comprehensive travel plan
+    // Step 6: Enhanced calendar analysis with timezone intelligence
+    let timezoneAnalysis = null;
+    
+    if (travelContext.destination && travelContext.events && travelContext.events.length > 0) {
+      try {
+        console.log('🧠 Running timezone conflict analysis...');
+        const timezoneEngine = new TimezoneReasoningEngine();
+        
+        const conflicts = await timezoneEngine.analyzeTimezoneConflicts(
+          travelContext.events,
+          travelContext.destination,
+          {
+            start: travelContext.startDate,
+            end: travelContext.endDate
+          }
+        );
+        
+        const smartRecommendations = timezoneEngine.generateSmartRecommendations(conflicts);
+        
+        timezoneAnalysis = {
+          conflicts,
+          recommendations: smartRecommendations,
+          conflictCount: conflicts.length,
+          highSeverityCount: conflicts.filter(c => c.severity === 'high').length
+        };
+        
+        console.log('⚡ Timezone analysis complete:', {
+          conflictCount: conflicts.length,
+          highSeverity: timezoneAnalysis.highSeverityCount
+        });
+        
+      } catch (error) {
+        console.error('❌ Timezone analysis failed:', error);
+        timezoneAnalysis = {
+          conflicts: [],
+          recommendations: ['Timezone analysis unavailable'],
+          conflictCount: 0,
+          highSeverityCount: 0
+        };
+      }
+    }
+    
+    // Step 7: Compile comprehensive travel plan with intelligence
     const completeTravelPlan = {
-      // Calendar information
+      // Enhanced calendar information with timezone intelligence
       calendar: {
         status: calendarStatus,
         events: travelContext.events || [],
         destination: travelContext.destination,
         purpose: travelContext.purpose,
         startDate: travelContext.startDate,
-        endDate: travelContext.endDate
+        endDate: travelContext.endDate,
+        // NEW: Add timezone intelligence
+        timezoneAnalysis: timezoneAnalysis
       },
       
       // Flight information
@@ -190,10 +235,11 @@ export async function POST(request: NextRequest) {
       
       // Metadata
       searchTime: new Date().toISOString(),
-      authenticationStatus: session?.user ? 'authenticated' : 'not_authenticated'
+      authenticationStatus: session?.user ? 'authenticated' : 'not_authenticated',
+      intelligenceLevel: 'timezone_reasoning_enabled' // NEW: Mark as intelligent
     };
     
-    // Step 7: Generate intelligent response
+    // Step 8: Generate intelligent response
     const response = await generateComprehensiveResponse(message, completeTravelPlan);
     
     console.log('✅ Comprehensive travel plan generated:', {
@@ -201,7 +247,8 @@ export async function POST(request: NextRequest) {
       flightOptions: completeTravelPlan.flights.status === 'success' ? completeTravelPlan.flights.totalOptions : 0,
       colleagues: completeTravelPlan.colleagues.count,
       linkedInConnections: completeTravelPlan.linkedIn.count,
-      authStatus: completeTravelPlan.authenticationStatus
+      authStatus: completeTravelPlan.authenticationStatus,
+      timezoneConflicts: completeTravelPlan.calendar.timezoneAnalysis?.conflictCount || 0
     });
     
     // Simulate AI processing time
@@ -271,47 +318,56 @@ async function generateComprehensiveResponse(message: string, travelPlan: any): 
 
     const { calendar, flights, colleagues, linkedIn } = travelPlan;
     
-    // Create rich context for Claude
-    const contextPrompt = `You are an AI travel assistant helping with trip planning. Here's what you found:
+    // Create rich context for Claude with timezone intelligence
+    const contextPrompt = `You are an AI travel assistant with intelligent reasoning capabilities. Here's what you found:
 
-USER MESSAGE: "${message}"
+    USER MESSAGE: "${message}"
 
-CALENDAR ANALYSIS:
-- Status: ${calendar.status}
-- Events found: ${calendar.events.length}
-- Destination: ${calendar.destination || 'Not specified'}
-- Purpose: ${calendar.purpose || 'Not specified'}
-${calendar.events.length > 0 ? `- Key Event: "${calendar.events[0].summary}" from ${calendar.startDate} to ${calendar.endDate}` : ''}
+    CALENDAR ANALYSIS:
+    - Status: ${calendar.status}
+    - Events found: ${calendar.events.length}
+    - Destination: ${calendar.destination || 'Not specified'}
+    - Purpose: ${calendar.purpose || 'Not specified'}
+    ${calendar.events.length > 0 ? `- Key Event: "${calendar.events[0].summary}" from ${calendar.startDate} to ${calendar.endDate}` : ''}
 
-FLIGHT SEARCH:
-- Status: ${flights.status}
-${flights.status === 'success' ? `- Found ${flights.totalOptions} flight options
-- Best option: ${flights.offers[0].airline} for $${flights.offers[0].price.total}
-- Route: ${flights.offers[0].departure.airport} → ${flights.offers[0].arrival.airport}
-- Departure: ${flights.offers[0].departure.time}` : '- No flights found'}
+    TIMEZONE INTELLIGENCE:
+    ${calendar.timezoneAnalysis ? `- Conflicts detected: ${calendar.timezoneAnalysis.conflictCount}
+    - High priority issues: ${calendar.timezoneAnalysis.highSeverityCount}
+    - Smart recommendations: ${calendar.timezoneAnalysis.recommendations.join('; ')}
+    ${calendar.timezoneAnalysis.conflicts.length > 0 ? 
+    `- Top conflict: "${calendar.timezoneAnalysis.conflicts[0].event.summary}" - ${calendar.timezoneAnalysis.conflicts[0].reason}` : 
+    '- No timezone conflicts detected'}` : '- Timezone analysis not available'}
 
-COLLEAGUES IN DESTINATION:
-- Found ${colleagues.count} company colleagues
-${colleagues.list.slice(0, 3).map(c => `- ${c.name} (${c.role})`).join('\n')}
+    FLIGHT SEARCH:
+    - Status: ${flights.status}
+    ${flights.status === 'success' ? `- Found ${flights.totalOptions} flight options
+    - Best option: ${flights.offers[0].airline} for $${flights.offers[0].price.total}
+    - Route: ${flights.offers[0].departure.airport} → ${flights.offers[0].arrival.airport}
+    - Departure: ${flights.offers[0].departure.time}` : '- No flights found'}
 
-LINKEDIN CONNECTIONS:
-- Found ${linkedIn.count} LinkedIn connections in the area
-${linkedIn.list.slice(0, 3).map(c => `- ${c.name} (${c.role} at ${c.company})`).join('\n')}
+    COLLEAGUES IN DESTINATION:
+    - Found ${colleagues.count} company colleagues
+    ${colleagues.list.slice(0, 3).map(c => `- ${c.name} (${c.role})`).join('\n')}
 
-Provide a helpful, professional response that:
-1. Acknowledges what you found in their calendar (or mention if auth issues)
-2. Highlights the best flight options with specific details
-3. Suggests meeting with relevant colleagues/connections
-4. Offers to help with next steps (booking flights, scheduling meetings)
-5. Keep it conversational and under 150 words
+    LINKEDIN CONNECTIONS:
+    - Found ${linkedIn.count} LinkedIn connections in the area
+    ${linkedIn.list.slice(0, 3).map(c => `- ${c.name} (${c.role} at ${c.company})`).join('\n')}
 
-Be specific about names, prices, and times when you have that data.`;
+    Provide a helpful, intelligent response that:
+    1. Acknowledges timezone conflicts and provides specific recommendations if any exist
+    2. Highlights the best flight options with specific details
+    3. Suggests optimal meeting times considering timezone differences
+    4. Recommends which colleagues/connections to prioritize
+    5. Shows intelligent reasoning beyond just listing information
+    6. Keep it conversational and under 200 words
+
+    Be specific about timezone recommendations and show intelligent problem-solving capabilities.`;
 
     console.log('🤖 Calling Claude API...');
     
     const response = await anthropic.messages.create({
       model: "claude-3-haiku-20240307",
-      max_tokens: 300,
+      max_tokens: 400,
       messages: [{
         role: "user",
         content: contextPrompt
@@ -346,12 +402,22 @@ function generateEnhancedFallbackResponse(message: string, travelPlan: any): str
   
   let response = '';
   
-  // Calendar section with auth status awareness
+  // Calendar section with auth status awareness and timezone intelligence
   if (calendar.events.length > 0) {
     const event = calendar.events[0];
     response += `Perfect! I found your "${event.summary}" in your calendar for ${calendar.destination}. `;
+    
+    // Add timezone intelligence
+    if (calendar.timezoneAnalysis && calendar.timezoneAnalysis.conflictCount > 0) {
+      response += `I detected ${calendar.timezoneAnalysis.conflictCount} timezone conflicts that need attention. `;
+      if (calendar.timezoneAnalysis.highSeverityCount > 0) {
+        response += `${calendar.timezoneAnalysis.highSeverityCount} are high priority. `;
+      }
+    } else if (calendar.timezoneAnalysis) {
+      response += `Good news - no timezone conflicts detected! `;
+    }
   } else if (calendar.status.includes('Not authenticated')) {
-    response += `I'd love to check your calendar for travel events! Please connect your Google Calendar, then I can find your specific trips. For now, I understand you're planning to travel to ${calendar.destination}. `;
+    response += `I'd love to check your calendar for travel events! Please connect your Google Calendar, then I can find your specific trips and analyze timezone conflicts. For now, I understand you're planning to travel to ${calendar.destination}. `;
   } else if (calendar.status.includes('auth error')) {
     response += `I had trouble accessing your calendar (authentication issue), but based on your message, I understand you're planning to travel to ${calendar.destination}. `;
   } else {
