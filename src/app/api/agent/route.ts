@@ -5,6 +5,7 @@ import { GoogleCalendarMCPServer } from '@/lib/mcp/google-calendar-server';
 import { AmadeusFlightMCPServer } from '@/lib/mcp/amadeus-server';
 import { MockCompanyMCPServer, MockLinkedInMCPServer } from '@/lib/mcp/mock-servers';
 import { TimezoneReasoningEngine } from '@/lib/reasoning/timezone-engine';
+import { RecommendationEngine } from '@/lib/reasoning/recommendation-engine'; // Add this line
 
 export async function POST(request: NextRequest) {
   try {
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
       console.log('✈️ Searching flights for:', travelContext.destination);
       
       // Determine origin airport
-      const origin = 'JFK'; // Default to New York
+      const origin = 'NYC'; // Default to New york
       
       // Smart date handling
       let departureDate, returnDate;
@@ -191,7 +192,70 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // Step 7: Compile comprehensive travel plan with intelligence
+    // Step 7: Generate hotel and restaurant recommendations
+    let hotelRecommendations = null;
+    let restaurantRecommendations = null;
+
+    if (travelContext.destination && travelContext.startDate) {
+      try {
+        console.log('🏨 Generating intelligent hotel and restaurant recommendations...');
+        const recommendationEngine = new RecommendationEngine();
+        
+        // Create user preferences (this would come from stored preferences later)
+        const defaultPreferences = {
+          hotels: {
+            chains: ['Hilton', 'Marriott', 'InterContinental'],
+            amenities: ['Business Center', 'WiFi', 'Fitness Center'],
+            priceRange: 'mid-range' as const,
+            roomType: 'standard' as const,
+            location: 'business-district' as const
+          },
+          restaurants: {
+            cuisines: ['International', 'Local', 'Asian'],
+            diningStyle: 'casual' as const,
+            dietaryRestrictions: [],
+            priceRange: 'mid-range' as const,
+            atmosphere: 'business' as const
+          },
+          meetingPreferences: {
+            preferredMeetingTimes: ['morning', 'afternoon'],
+            meetingLocations: 'office' as const,
+            businessEntertainment: true
+          }
+        };
+        
+        const recommendationContext = {
+          destination: travelContext.destination,
+          dates: { start: travelContext.startDate, end: travelContext.endDate },
+          purpose: travelContext.purpose || 'Business travel',
+          meetingLocations: ['Business District'], // This would be extracted from calendar
+          calendarEvents: travelContext.events || []
+        };
+        
+        // Generate recommendations
+        hotelRecommendations = await recommendationEngine.generateHotelRecommendations(
+          recommendationContext,
+          defaultPreferences
+        );
+        
+        restaurantRecommendations = await recommendationEngine.generateRestaurantRecommendations(
+          recommendationContext,
+          defaultPreferences
+        );
+        
+        console.log('🎯 Recommendations generated:', {
+          hotels: hotelRecommendations.length,
+          restaurants: restaurantRecommendations.length
+        });
+        
+      } catch (error) {
+        console.error('❌ Recommendation generation failed:', error);
+        hotelRecommendations = [];
+        restaurantRecommendations = [];
+      }
+    }
+
+    // Step 8: Compile comprehensive travel plan with all intelligence
     const completeTravelPlan = {
       // Enhanced calendar information with timezone intelligence
       calendar: {
@@ -201,32 +265,45 @@ export async function POST(request: NextRequest) {
         purpose: travelContext.purpose,
         startDate: travelContext.startDate,
         endDate: travelContext.endDate,
-        // NEW: Add timezone intelligence
         timezoneAnalysis: timezoneAnalysis
       },
       
-      // Flight information
+      // Flight information (unchanged)
       flights: flightResult.flights ? {
         status: 'success',
         origin: flightResult.flights.origin,
         destination: flightResult.flights.destination,
         departureDate: flightResult.flights.departureDate,
         returnDate: flightResult.flights.returnDate,
-        offers: flightResult.flights.offers.slice(0, 4), // Top 4 options
+        offers: flightResult.flights.offers.slice(0, 4),
         totalOptions: flightResult.flights.offers.length
       } : {
         status: 'error',
         error: flightResult.flightError || 'No flight search performed'
       },
       
-      // Company colleagues
+      // NEW: Hotel recommendations
+      hotels: {
+        status: hotelRecommendations ? 'success' : 'not_generated',
+        recommendations: hotelRecommendations || [],
+        count: hotelRecommendations?.length || 0
+      },
+      
+      // NEW: Restaurant recommendations  
+      restaurants: {
+        status: restaurantRecommendations ? 'success' : 'not_generated',
+        recommendations: restaurantRecommendations || [],
+        count: restaurantRecommendations?.length || 0
+      },
+      
+      // Company colleagues (unchanged)
       colleagues: {
         status: 'success',
         count: colleagueResult.colleagues?.length || 0,
         list: colleagueResult.colleagues || []
       },
       
-      // LinkedIn connections
+      // LinkedIn connections (unchanged)
       linkedIn: {
         status: 'success',
         count: connectionResult.connections?.length || 0,
@@ -236,7 +313,7 @@ export async function POST(request: NextRequest) {
       // Metadata
       searchTime: new Date().toISOString(),
       authenticationStatus: session?.user ? 'authenticated' : 'not_authenticated',
-      intelligenceLevel: 'timezone_reasoning_enabled' // NEW: Mark as intelligent
+      intelligenceLevel: 'full_reasoning_enabled' // Updated to reflect all intelligence
     };
     
     // Step 8: Generate intelligent response

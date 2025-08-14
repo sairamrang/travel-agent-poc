@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { Send, Bot, User, Plane, Calendar, Users, MapPin, LogIn } from 'lucide-react';
+import HotelRecommendationCards from '@/components/HotelRecommendationCards';
+import RestaurantRecommendationCards from '@/components/RestaurantRecommendationCards';
 
 export default function TravelAgent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -320,6 +322,22 @@ export default function TravelAgent() {
                           </div>
                         )}
                         
+                        {/* Hotel Recommendations Section */}
+                        {message.data.hotels && message.data.hotels.status === 'success' && (
+                          <HotelRecommendationCards 
+                            recommendations={message.data.hotels.recommendations}
+                            destination={message.data.calendar?.destination || 'your destination'}
+                          />
+                        )}
+
+                        {/* Restaurant Recommendations Section */}
+                        {message.data.restaurants && message.data.restaurants.status === 'success' && (
+                          <RestaurantRecommendationCards 
+                            recommendations={message.data.restaurants.recommendations}
+                            destination={message.data.calendar?.destination || 'your destination'}
+                          />
+                        )}
+
                         {/* Colleagues Section */}
                         {message.data.colleagues && message.data.colleagues.count > 0 && (
                           <div className="p-3 bg-purple-50 rounded border-l-4 border-purple-400">
