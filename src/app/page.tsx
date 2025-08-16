@@ -283,7 +283,7 @@ export default function TravelAgent() {
                             )}
                             
                             {/* Calendar Events Table */}
-                            {message.data.calendar.events.length > 0 && (
+                            {message.data.calendar.events && message.data.calendar.events.length > 0 && (
                               <div className="bg-white rounded border overflow-hidden">
                                 <table className="w-full text-xs">
                                   <thead className="bg-gray-50">
@@ -333,7 +333,7 @@ export default function TravelAgent() {
                         )}
                         
                         {/* Flight Section */}
-                        {message.data.flights && message.data.flights.status === 'success' && (
+                        {message.data.flights && message.data.flights.status === 'success' && message.data.flights.offers && message.data.flights.offers.length > 0 && (
                           <div className="p-3 bg-green-50 rounded border-l-4 border-green-400">
                             <div className="flex items-center gap-2 mb-2">
                               <Plane className="w-4 h-4 text-green-600" />
@@ -370,7 +370,7 @@ export default function TravelAgent() {
                         )}
 
                         {/* Colleagues Section */}
-                        {message.data.colleagues && message.data.colleagues.count > 0 && (
+                        {message.data.colleagues && message.data.colleagues.count > 0 && message.data.colleagues.list && message.data.colleagues.list.length > 0 && (
                           <div className="p-3 bg-purple-50 rounded border-l-4 border-purple-400">
                             <div className="flex items-center gap-2 mb-2">
                               <Users className="w-4 h-4 text-purple-600" />
@@ -385,7 +385,7 @@ export default function TravelAgent() {
                         )}
                         
                         {/* LinkedIn Section */}
-                        {message.data.linkedIn && message.data.linkedIn.count > 0 && (
+                        {message.data.linkedIn && message.data.linkedIn.count > 0 && message.data.linkedIn.list && message.data.linkedIn.list.length > 0 && (
                           <div className="p-3 bg-blue-50 rounded border-l-4 border-blue-400">
                             <div className="flex items-center gap-2 mb-2">
                               <MapPin className="w-4 h-4 text-blue-600" />
