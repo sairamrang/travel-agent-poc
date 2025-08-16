@@ -27,12 +27,12 @@ interface HotelRecommendation {
 }
 
 interface HotelRecommendationCardsProps {
-  recommendations: HotelRecommendation[];
+  recommendations?: HotelRecommendation[]; // Made optional
   destination: string;
 }
 
 const HotelRecommendationCards: React.FC<HotelRecommendationCardsProps> = ({ 
-  recommendations, 
+  recommendations = [], // Default to empty array
   destination 
 }) => {
   const getAmenityIcon = (amenity: string) => {
@@ -177,7 +177,9 @@ const HotelRecommendationCards: React.FC<HotelRecommendationCardsProps> = ({
     }
   });
 
-  const displayRecommendations = recommendations.length > 0 ? recommendations : mockRecommendations;
+  // Safe check for recommendations array
+  const validRecommendations = Array.isArray(recommendations) ? recommendations : [];
+  const displayRecommendations = validRecommendations.length > 0 ? validRecommendations : mockRecommendations;
   const safeRecommendations = displayRecommendations.map(safeHotelData);
 
   return (

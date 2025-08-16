@@ -34,15 +34,15 @@ export class GoogleCalendarMCPServer {
 
   async extractTravelEvents(timeMin?: string, timeMax?: string): Promise<TravelContext> {
     try {
-      // Get events from the past month to next 3 months to find travel
+      // Get events from today to next 15 days (or use provided dates)
       const now = new Date();
-      const pastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const futureMonths = new Date(now.getFullYear(), now.getMonth() + 3, 0);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Start of today
+      const next15Days = new Date(today.getTime() + 15 * 24 * 60 * 60 * 1000); // 15 days from today
 
       const response = await this.calendar.events.list({
         calendarId: 'primary',
-        timeMin: timeMin || pastMonth.toISOString(),
-        timeMax: timeMax || futureMonths.toISOString(),
+        timeMin: timeMin || today.toISOString(),
+        timeMax: timeMax || next15Days.toISOString(),
         singleEvents: true,
         orderBy: 'startTime',
         maxResults: 50,
@@ -52,7 +52,7 @@ export class GoogleCalendarMCPServer {
 
         // Debug: Log all events found
         console.log('🔍 === CALENDAR DEBUG INFO ===');
-        console.log('📅 Search range:', pastMonth.toISOString(), 'to', futureMonths.toISOString());
+        console.log('📅 Search range:', today.toISOString(), 'to', next15Days.toISOString());
         console.log('📋 Total events found:', events.length);
         console.log('📝 All events details:');
 

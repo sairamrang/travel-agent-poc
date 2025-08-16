@@ -34,13 +34,13 @@ interface RestaurantRecommendation {
 }
 
 interface RestaurantRecommendationCardsProps {
-  recommendations: RestaurantRecommendation[];
+  recommendations?: RestaurantRecommendation[]; // Made optional
   destination: string;
   meetingContext?: string;
 }
 
 const RestaurantRecommendationCards: React.FC<RestaurantRecommendationCardsProps> = ({ 
-  recommendations, 
+  recommendations = [], // Default to empty array
   destination,
   meetingContext = "your meetings"
 }) => {
@@ -191,7 +191,42 @@ const RestaurantRecommendationCards: React.FC<RestaurantRecommendationCardsProps
     }
   ];
 
-  const displayRecommendations = recommendations.length > 0 ? recommendations : mockRecommendations;
+  // Helper function to safely get restaurant data with fallbacks
+  const safeRestaurantData = (restaurant: any) => ({
+    id: restaurant.id || Math.random().toString(),
+    name: restaurant.name || 'Restaurant Name',
+    cuisine: restaurant.cuisine || 'International',
+    rating: restaurant.rating || 4.0,
+    priceRange: restaurant.priceRange || 'mid-range',
+    location: {
+      address: restaurant.location?.address || 'Address not available',
+      district: restaurant.location?.district || 'District',
+      proximityToHotel: restaurant.location?.proximityToHotel || '0.5 miles from your hotel',
+      proximityToMeetings: restaurant.location?.proximityToMeetings || '0.3 miles from meeting location',
+      walkingTime: restaurant.location?.walkingTime || '5 min walk'
+    },
+    diningStyle: restaurant.diningStyle || 'business-casual',
+    atmosphere: restaurant.atmosphere || 'business',
+    specialties: restaurant.specialties || ['Local Cuisine'],
+    businessFeatures: restaurant.businessFeatures || ['Group Dining', 'Business WiFi'],
+    contextualReasons: restaurant.contextualReasons || ['Perfect for business dining'],
+    availability: {
+      lunch: restaurant.availability?.lunch !== false,
+      dinner: restaurant.availability?.dinner !== false,
+      businessHours: restaurant.availability?.businessHours || '11:00 AM - 10:00 PM'
+    },
+    reservationUrl: restaurant.reservationUrl || '#',
+    averagePrice: {
+      lunch: restaurant.averagePrice?.lunch || restaurant.estimatedPrice || 30,
+      dinner: restaurant.averagePrice?.dinner || restaurant.estimatedPrice || 50,
+      currency: restaurant.averagePrice?.currency || 'USD'
+    }
+  });
+
+  // Safe check for recommendations array
+  const validRecommendations = Array.isArray(recommendations) ? recommendations : [];
+  const displayRecommendations = validRecommendations.length > 0 ? validRecommendations : mockRecommendations;
+  const safeRecommendations = displayRecommendations.map(safeRestaurantData);
 
   return (
     <div className="space-y-6">
@@ -206,13 +241,13 @@ const RestaurantRecommendationCards: React.FC<RestaurantRecommendationCardsProps
           </p>
         </div>
         <div className="bg-orange-50 text-orange-700 px-3 py-1 rounded-full text-sm font-medium">
-          {displayRecommendations.length} matches
+          {safeRecommendations.length} matches
         </div>
       </div>
 
       {/* Restaurant Cards */}
       <div className="grid gap-4">
-        {displayRecommendations.map((restaurant) => (
+        {safeRecommendations.map((restaurant) => (
           <div
             key={restaurant.id}
             className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow"

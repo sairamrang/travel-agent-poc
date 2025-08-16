@@ -212,6 +212,25 @@ export default function TravelAgent() {
                                       )}
                                     </div>
                                     
+                                    {/* Conflict Summary */}
+                                    <div className="flex flex-wrap gap-2 mb-3">
+                                      {message.data.calendar.timezoneAnalysis.businessHoursConflicts > 0 && (
+                                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded">
+                                          🕐 {message.data.calendar.timezoneAnalysis.businessHoursConflicts} Business Hours
+                                        </span>
+                                      )}
+                                      {message.data.calendar.timezoneAnalysis.timezoneMismatches > 0 && (
+                                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                                          🌍 {message.data.calendar.timezoneAnalysis.timezoneMismatches} Timezone Mismatches
+                                        </span>
+                                      )}
+                                      {message.data.calendar.timezoneAnalysis.travelConflicts > 0 && (
+                                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                          ✈️ {message.data.calendar.timezoneAnalysis.travelConflicts} Travel Conflicts
+                                        </span>
+                                      )}
+                                    </div>
+                                    
                                     {/* Show top 3 conflicts */}
                                     <div className="space-y-2">
                                       {message.data.calendar.timezoneAnalysis.conflicts.slice(0, 3).map((conflict: any, idx: number) => (
@@ -226,6 +245,18 @@ export default function TravelAgent() {
                                             }`}></span>
                                             {conflict.reason}
                                           </div>
+                                          
+                                          {/* Business Hours Analysis */}
+                                          {conflict.businessHoursAnalysis && (
+                                            <div className="text-xs text-gray-500 mt-1 bg-gray-50 p-1 rounded">
+                                              <div>🕐 Local: {conflict.businessHoursAnalysis.localStartTime} - {conflict.businessHoursAnalysis.localEndTime}</div>
+                                              <div>🌍 Destination: {conflict.businessHoursAnalysis.destinationStartTime} - {conflict.businessHoursAnalysis.destinationEndTime}</div>
+                                              <div className={`font-medium ${conflict.businessHoursAnalysis.isWithinBusinessHours ? 'text-green-600' : 'text-red-600'}`}>
+                                                {conflict.businessHoursAnalysis.isWithinBusinessHours ? '✅ Within business hours' : '❌ Outside business hours'}
+                                              </div>
+                                            </div>
+                                          )}
+                                          
                                           <div className="text-xs text-blue-600 mt-1">
                                             💡 Best option: {conflict.rescheduleOptions[0]?.reason}
                                           </div>
