@@ -1,9 +1,38 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Send, Bot, User, Plane, Calendar, Users, MapPin, LogIn } from 'lucide-react';
-import HotelRecommendationCards from '@/components/HotelRecommendationCards';
-import RestaurantRecommendationCards from '@/components/RestaurantRecommendationCards';
+import { Send, Bot, User, LogIn, Settings, Maximize2, Minimize2 } from 'lucide-react';
+import TravelDashboard from '@/components/TravelDashboard';
+
+// Context Type Definition
+interface ConversationContext {
+  currentTrip?: {
+    origin?: string;
+    destination?: string;
+    startDate?: string;
+    endDate?: string;
+    travelers?: number;
+  };
+  preferences: {
+    budget?: {
+      restaurants?: { min?: number; max?: number; perPerson?: boolean };
+      hotels?: { min?: number; max?: number; perNight?: boolean };
+      flights?: { max?: number; class?: string };
+    };
+    loyalty?: {
+      airlines?: string[];
+      hotels?: string[];
+    };
+    dietary?: string[];
+    cuisine?: string[];
+    hotelAmenities?: string[];
+  };
+  lastSearches?: {
+    flights?: any;
+    hotels?: any;
+    restaurants?: any;
+  };
+}
 
 export default function TravelAgent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -18,6 +47,11 @@ export default function TravelAgent() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [conversationContext, setConversationContext] = useState<ConversationContext | null>(null);
+  const [showPreferences, setShowPreferences] = useState(false);
+  
+  // NEW: State for dashboard view
+  const [expandedDashboard, setExpandedDashboard] = useState<number | null>(null);
 
   // Check authentication status
   useEffect(() => {
@@ -31,13 +65,13 @@ export default function TravelAgent() {
       .catch(err => console.error('Session check failed:', err));
   }, []);
 
-  // Initialize messages on client side to avoid hydration mismatch
+  // Initialize messages
   useEffect(() => {
     if (!isInitialized) {
       setMessages([
         {
           role: 'assistant',
-          content: 'Hi! I\'m your AI travel assistant. I can access your Google Calendar to find travel events and help organize everything!',
+          content: 'Hi! I\'m your AI travel assistant. I can access your Google Calendar to find travel events and help organize everything with a beautiful dashboard view! 📊',
           timestamp: new Date()
         }
       ]);
@@ -45,427 +79,315 @@ export default function TravelAgent() {
     }
   }, [isInitialized]);
 
-  
-    const sendMessage = async () => {
-      if (!input.trim() || isLoading) return;
+  const sendMessage = async () => {
+    if (!input.trim() || isLoading) return;
 
-      const userMessage = {
-        role: 'user' as const,
-        content: input,
-        timestamp: new Date()
-      };
+    const userMessage = {
+      role: 'user' as const,
+      content: input,
+      timestamp: new Date()
+    };
 
-      setMessages(prev => [...prev, userMessage]);
-      setInput('');
-      setIsLoading(true);
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
 
-      try {
-        const response = await fetch('/api/agent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: input })
-        });
+    try {
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message: input,
+          conversationContext: conversationContext
+        })
+      });
 
-        const data = await response.json();
-        
-        setMessages(prev => [...prev, {
-          role: 'assistant' as const,
-          content: data.response || 'I\'m working on that for you!',
-          timestamp: new Date(),
-          data: data.travelPlan
-        }]);
-      } catch (error) {
-        setMessages(prev => [...prev, {
-          role: 'assistant' as const,
-          content: 'I\'m having trouble connecting right now. Let me help you with a demo response!',
-          timestamp: new Date()
-        }]);
-      } finally {
-        setIsLoading(false);
+      const data = await response.json();
+      
+      if (data.conversationContext) {
+        setConversationContext(data.conversationContext);
+        console.log('📊 Updated context:', data.conversationContext);
       }
-    };
+      
+      setMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: data.response || 'I\'m working on that for you!',
+        timestamp: new Date(),
+        data: data.travelPlan
+      }]);
+    } catch (error) {
+      setMessages(prev => [...prev, {
+        role: 'assistant' as const,
+        content: 'I\'m having trouble connecting right now. Let me help you with a demo response!',
+        timestamp: new Date()
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    const signIn = () => {
-      window.location.href = '/api/auth/signin';
-    };
+  const signIn = () => {
+    window.location.href = '/api/auth/signin';
+  };
+  
+  const signOut = () => {
+    window.location.href = '/api/auth/signout';
+  };
+  
+  // Preferences Display Component
+  const PreferencesDisplay = () => {
+    if (!conversationContext?.preferences) return null;
     
-    const signOut = () => {
-      window.location.href = '/api/auth/signout';
-    };
+    const prefs = conversationContext.preferences;
+    const items = [];
     
-  // Enhanced auth button with reconnect option
-    const authButton = !isAuthenticated ? (
-      <div className="flex gap-2">
-        <button
-          onClick={signIn}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          <LogIn className="w-4 h-4" />
-          Connect Google Calendar
-        </button>
-      </div>
-    ) : (
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 text-green-600">
-          <Calendar className="w-4 h-4" />
-          <span className="text-sm">
-            Connected: {debugInfo?.user?.email} 
-            <span className="ml-2 text-xs bg-green-100 px-2 py-1 rounded">
-              Calendar Active
-            </span>
-          </span>
-        </div>
-        
-        {/* Reconnect and Sign Out Options */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={signIn}
-            className="text-xs text-blue-600 hover:text-blue-800 underline"
-            title="Refresh calendar connection"
-          >
-            Reconnect
-          </button>
-          <span className="text-gray-300">|</span>
-          <button
-            onClick={signOut}
-            className="text-xs text-red-600 hover:text-red-800 underline"
-            title="Sign out of Google Calendar"
-          >
-            Sign Out
-          </button>
-        </div>
-      </div>
-    );
-
-  return (
-    <div className="h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b p-4">
-        <div className="max-w-4xl mx-auto flex items-center gap-3">
+    if (prefs.budget?.restaurants?.max) {
+      items.push(`🍽️ Restaurants: Under $${prefs.budget.restaurants.max}${prefs.budget.restaurants.perPerson ? ' per person' : ''}`);
+    }
+    if (prefs.budget?.hotels?.max) {
+      items.push(`🏨 Hotels: Under $${prefs.budget.hotels.max}/night`);
+    }
+    if (prefs.loyalty?.airlines?.length) {
+      items.push(`✈️ Airlines: ${prefs.loyalty.airlines.join(', ')}`);
+    }
+    if (prefs.loyalty?.hotels?.length) {
+      items.push(`🏨 Chains: ${prefs.loyalty.hotels.join(', ')}`);
+    }
+    
+    if (items.length === 0) return null;
+    
+    return (
+      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <Bot className="w-8 h-8 text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">Travel Agent AI</h1>
+            <Settings className="w-4 h-4 text-purple-600" />
+            <span className="font-medium text-purple-800 text-sm">Active Preferences</span>
           </div>
-          <div className="ml-auto flex items-center gap-4">
-            {authButton}
-          </div>
+          <button
+            onClick={() => setShowPreferences(!showPreferences)}
+            className="text-xs text-purple-600 hover:text-purple-800"
+          >
+            {showPreferences ? 'Hide' : 'Show'}
+          </button>
         </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="max-w-4xl mx-auto space-y-6">
-          {messages.map((message, index) => (
-            <div
-              key={index}
-              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-3xl rounded-lg p-4 ${
-                  message.role === 'user'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white shadow-md border'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {message.role === 'assistant' && (
-                    <Bot className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                  )}
-                  {message.role === 'user' && (
-                    <User className="w-5 h-5 text-blue-100 mt-0.5 flex-shrink-0" />
-                  )}
-                  <div className="flex-1">
-                    <p className="text-sm leading-relaxed">{message.content}</p>
-                    {message.data && (
-                      <div className="mt-4 space-y-3">
-                        {/* Enhanced Calendar Section with Timezone Intelligence */}
-                        {message.data.calendar && (
-                          <div className="p-3 bg-blue-50 rounded border-l-4 border-blue-400">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Calendar className="w-4 h-4 text-blue-600" />
-                              <span className="font-medium text-blue-800">
-                                Calendar Events ({message.data.calendar.events.length} found)
-                              </span>
-                              {message.data.calendar.timezoneAnalysis && (
-                                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                                  🧠 Smart Analysis
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-sm text-blue-700 mb-3">
-                              Status: {message.data.calendar.status}
-                            </p>
-                            
-                            {/* Timezone Intelligence Section */}
-                            {message.data.calendar.timezoneAnalysis && (
-                              <div className="mb-4">
-                                {message.data.calendar.timezoneAnalysis.conflictCount > 0 ? (
-                                  <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-3">
-                                    <div className="flex items-center gap-2 mb-2">
-                                      <span className="text-sm font-medium text-yellow-800">
-                                        ⚠️ {message.data.calendar.timezoneAnalysis.conflictCount} Timezone Conflicts Detected
-                                      </span>
-                                      {message.data.calendar.timezoneAnalysis.highSeverityCount > 0 && (
-                                        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
-                                          {message.data.calendar.timezoneAnalysis.highSeverityCount} High Priority
-                                        </span>
-                                      )}
-                                    </div>
-                                    
-                                    {/* Conflict Summary */}
-                                    <div className="flex flex-wrap gap-2 mb-3">
-                                      {message.data.calendar.timezoneAnalysis.businessHoursConflicts > 0 && (
-                                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded">
-                                          🕐 {message.data.calendar.timezoneAnalysis.businessHoursConflicts} Business Hours
-                                        </span>
-                                      )}
-                                      {message.data.calendar.timezoneAnalysis.timezoneMismatches > 0 && (
-                                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                                          🌍 {message.data.calendar.timezoneAnalysis.timezoneMismatches} Timezone Mismatches
-                                        </span>
-                                      )}
-                                      {message.data.calendar.timezoneAnalysis.travelConflicts > 0 && (
-                                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                                          ✈️ {message.data.calendar.timezoneAnalysis.travelConflicts} Travel Conflicts
-                                        </span>
-                                      )}
-                                    </div>
-                                    
-                                    {/* Show top 3 conflicts */}
-                                    <div className="space-y-2">
-                                      {message.data.calendar.timezoneAnalysis.conflicts.slice(0, 3).map((conflict: any, idx: number) => (
-                                        <div key={idx} className="bg-white rounded p-2 border border-yellow-200">
-                                          <div className="text-sm font-medium text-gray-900">
-                                            {conflict.event.summary}
-                                          </div>
-                                          <div className="text-xs text-gray-600 mt-1">
-                                            <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
-                                              conflict.severity === 'high' ? 'bg-red-500' : 
-                                              conflict.severity === 'medium' ? 'bg-yellow-500' : 'bg-green-500'
-                                            }`}></span>
-                                            {conflict.reason}
-                                          </div>
-                                          
-                                          {/* Business Hours Analysis */}
-                                          {conflict.businessHoursAnalysis && (
-                                            <div className="text-xs text-gray-500 mt-1 bg-gray-50 p-1 rounded">
-                                              <div>🕐 Local: {conflict.businessHoursAnalysis.localStartTime} - {conflict.businessHoursAnalysis.localEndTime}</div>
-                                              <div>🌍 Destination: {conflict.businessHoursAnalysis.destinationStartTime} - {conflict.businessHoursAnalysis.destinationEndTime}</div>
-                                              <div className={`font-medium ${conflict.businessHoursAnalysis.isWithinBusinessHours ? 'text-green-600' : 'text-red-600'}`}>
-                                                {conflict.businessHoursAnalysis.isWithinBusinessHours ? '✅ Within business hours' : '❌ Outside business hours'}
-                                              </div>
-                                            </div>
-                                          )}
-                                          
-                                          <div className="text-xs text-blue-600 mt-1">
-                                            💡 Best option: {conflict.rescheduleOptions[0]?.reason}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                    
-                                    {/* Smart Recommendations */}
-                                    {message.data.calendar.timezoneAnalysis.recommendations.length > 0 && (
-                                      <div className="mt-3 pt-2 border-t border-yellow-200">
-                                        <div className="text-xs font-medium text-yellow-800 mb-1">Smart Recommendations:</div>
-                                        {message.data.calendar.timezoneAnalysis.recommendations.map((rec: string, idx: number) => (
-                                          <div key={idx} className="text-xs text-yellow-700">• {rec}</div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <div className="bg-green-50 border border-green-200 rounded p-2 mb-3">
-                                    <span className="text-sm text-green-700">✅ No timezone conflicts detected - great scheduling!</span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                            
-                            {/* Calendar Events Table */}
-                            {message.data.calendar.events && message.data.calendar.events.length > 0 && (
-                              <div className="bg-white rounded border overflow-hidden">
-                                <table className="w-full text-xs">
-                                  <thead className="bg-gray-50">
-                                    <tr>
-                                      <th className="text-left p-2 font-medium">Event</th>
-                                      <th className="text-left p-2 font-medium">Date</th>
-                                      <th className="text-left p-2 font-medium">Location</th>
-                                      <th className="text-left p-2 font-medium">Status</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {message.data.calendar.events.map((event: any, idx: number) => {
-                                      // Find if this event has a conflict
-                                      const conflict = message.data.calendar.timezoneAnalysis?.conflicts.find(
-                                        (c: any) => c.event.id === event.id
-                                      );
-                                      
-                                      return (
-                                        <tr key={idx} className="border-t">
-                                          <td className="p-2 font-medium">{event.summary}</td>
-                                          <td className="p-2 text-gray-600">
-                                            {isInitialized ? new Date(event.start.dateTime).toLocaleDateString() : ''}
-                                          </td>
-                                          <td className="p-2 text-gray-600">{event.location || 'No location'}</td>
-                                          <td className="p-2">
-                                            {conflict ? (
-                                              <span className={`text-xs px-2 py-1 rounded ${
-                                                conflict.severity === 'high' ? 'bg-red-100 text-red-700' :
-                                                conflict.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                                'bg-blue-100 text-blue-700'
-                                              }`}>
-                                                {conflict.severity === 'high' ? '⚠️' : 
-                                                conflict.severity === 'medium' ? '⚡' : 'ℹ️'} {conflict.conflictType.replace('_', ' ')}
-                                              </span>
-                                            ) : (
-                                              <span className="text-xs text-green-600">✅ OK</span>
-                                            )}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        
-                        {/* Flight Section */}
-                        {message.data.flights && message.data.flights.status === 'success' && message.data.flights.offers && message.data.flights.offers.length > 0 && (
-                          <div className="p-3 bg-green-50 rounded border-l-4 border-green-400">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Plane className="w-4 h-4 text-green-600" />
-                              <span className="font-medium text-green-800">Flight Options</span>
-                            </div>
-                            <div className="space-y-2">
-                              {message.data.flights.offers.slice(0, 2).map((flight: any, idx: number) => (
-                                <div key={idx} className="text-sm text-green-700 bg-white p-2 rounded">
-                                  <strong>{flight.airline}</strong> - ${flight.price.total} 
-                                  <br />
-                                  {flight.departure.airport} → {flight.arrival.airport}
-                                  <br />
-                                  Departure: {isInitialized ? new Date(flight.departure.time).toLocaleString() : ''}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* Hotel Recommendations Section */}
-                        {message.data.hotels && message.data.hotels.status === 'success' && (
-                          <HotelRecommendationCards 
-                            recommendations={message.data.hotels.recommendations}
-                            destination={message.data.calendar?.destination || 'your destination'}
-                          />
-                        )}
-
-                        {/* Restaurant Recommendations Section */}
-                        {message.data.restaurants && message.data.restaurants.status === 'success' && (
-                          <RestaurantRecommendationCards 
-                            recommendations={message.data.restaurants.recommendations}
-                            destination={message.data.calendar?.destination || 'your destination'}
-                          />
-                        )}
-
-                        {/* Colleagues Section */}
-                        {message.data.colleagues && message.data.colleagues.count > 0 && message.data.colleagues.list && message.data.colleagues.list.length > 0 && (
-                          <div className="p-3 bg-purple-50 rounded border-l-4 border-purple-400">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Users className="w-4 h-4 text-purple-600" />
-                              <span className="font-medium text-purple-800">Company Colleagues</span>
-                            </div>
-                            <div className="text-sm text-purple-700">
-                              {message.data.colleagues.list.slice(0, 3).map((colleague: any, idx: number) => (
-                                <div key={idx}>• {colleague.name} - {colleague.role}</div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        
-                        {/* LinkedIn Section */}
-                        {message.data.linkedIn && message.data.linkedIn.count > 0 && message.data.linkedIn.list && message.data.linkedIn.list.length > 0 && (
-                          <div className="p-3 bg-blue-50 rounded border-l-4 border-blue-400">
-                            <div className="flex items-center gap-2 mb-2">
-                              <MapPin className="w-4 h-4 text-blue-600" />
-                              <span className="font-medium text-blue-800">LinkedIn Connections</span>
-                            </div>
-                            <div className="text-sm text-blue-700">
-                              {message.data.linkedIn.list.slice(0, 3).map((connection: any, idx: number) => (
-                                <div key={idx}>• {connection.name} - {connection.role} at {connection.company}</div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    <p className="text-xs opacity-70 mt-2">
-                      {isInitialized ? message.timestamp.toLocaleTimeString() : ''}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-          
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-white shadow-md border rounded-lg p-4 max-w-xs">
-                <div className="flex items-center gap-3">
-                  <Bot className="w-5 h-5 text-blue-600" />
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce delay-75"></div>
-                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce delay-150"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Input */}
-      <div className="bg-white border-t p-4">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex gap-3">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-              placeholder="Tell me about your travel plans... (e.g., 'I'm going to London next month')"
-              className="flex-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={isLoading || !input.trim()}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              <Send className="w-4 h-4" />
-              Send
-            </button>
-          </div>
-          
-          {/* Quick suggestions */}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {[
-              "I'm traveling to London for a conference",
-              "Going to Singapore for meetings",
-              "Planning a trip to Tokyo next month"
-            ].map((suggestion, index) => (
-              <button
-                key={index}
-                onClick={() => setInput(suggestion)}
-                className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700"
-                disabled={isLoading}
-              >
-                {suggestion}
-              </button>
+        {showPreferences && (
+          <div className="space-y-1">
+            {items.map((item, idx) => (
+              <div key={idx} className="text-xs text-purple-700">{item}</div>
             ))}
           </div>
+        )}
+      </div>
+    );
+  };
+  
+  // Auth button
+  const authButton = !isAuthenticated ? (
+    <button
+      onClick={signIn}
+      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+    >
+      <LogIn className="w-4 h-4" />
+      Connect Calendar
+    </button>
+  ) : (
+    <div className="flex items-center gap-3">
+      <span className="text-sm text-green-600">
+        Connected: {debugInfo?.user?.email}
+      </span>
+      <button
+        onClick={signOut}
+        className="text-xs text-red-600 hover:text-red-800"
+      >
+        Sign Out
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex flex-col">
+      {/* Modern Header */}
+      <div className="bg-white/80 backdrop-blur-sm shadow-sm border-b border-gray-200 p-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl shadow-lg">
+              <Bot className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Travel Intelligence AI</h1>
+              <p className="text-xs text-gray-500">Powered by MCP Architecture</p>
+            </div>
+          </div>
+          {authButton}
         </div>
+      </div>
+
+      {/* Chat and Dashboard Area */}
+      <div className="flex-1 overflow-hidden flex">
+        {/* Chat Section */}
+        <div className={`${expandedDashboard !== null ? 'w-1/3' : 'w-full max-w-4xl mx-auto'} flex flex-col transition-all duration-300`}>
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="space-y-4">
+              {/* Preferences Display */}
+              {conversationContext && <PreferencesDisplay />}
+              
+              {/* Messages */}
+              {messages.map((message, index) => (
+                <div key={index}>
+                  {/* Message Bubble */}
+                  <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} mb-2`}>
+                    <div className={`max-w-xl rounded-2xl px-4 py-3 ${
+                      message.role === 'user'
+                        ? 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white shadow-lg'
+                        : 'bg-white shadow-md border border-gray-100'
+                    }`}>
+                      <div className="flex items-start gap-3">
+                        {message.role === 'assistant' && (
+                          <Bot className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                        )}
+                        <div className="flex-1">
+                          <p className="text-sm leading-relaxed">{message.content}</p>
+                          <p className={`text-xs mt-2 ${
+                            message.role === 'user' ? 'text-blue-100' : 'text-gray-400'
+                          }`}>
+                            {isInitialized ? message.timestamp.toLocaleTimeString() : ''}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Dashboard Preview/Toggle for Assistant Messages with Data */}
+                  {message.role === 'assistant' && message.data && (
+                    <div className="mb-4">
+                      {expandedDashboard !== index ? (
+                        // Compact Dashboard Preview
+                        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-4 mx-auto max-w-2xl">
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-semibold text-gray-900">
+                              Trip Dashboard - {message.data.calendar?.destination || 'Your Destination'}
+                            </h3>
+                            <button
+                              onClick={() => setExpandedDashboard(index)}
+                              className="flex items-center gap-2 px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                            >
+                              <Maximize2 className="w-4 h-4" />
+                              Expand Dashboard
+                            </button>
+                          </div>
+                          
+                          {/* Quick Stats Preview */}
+                          <div className="grid grid-cols-4 gap-3">
+                            <div className="text-center p-2 bg-blue-50 rounded-lg">
+                              <p className="text-2xl font-bold text-blue-600">
+                                {message.data.flights?.flights?.length || 0}
+                              </p>
+                              <p className="text-xs text-gray-600">Flights</p>
+                            </div>
+                            <div className="text-center p-2 bg-green-50 rounded-lg">
+                              <p className="text-2xl font-bold text-green-600">
+                                {message.data.hotels?.hotels?.length || 0}
+                              </p>
+                              <p className="text-xs text-gray-600">Hotels</p>
+                            </div>
+                            <div className="text-center p-2 bg-orange-50 rounded-lg">
+                              <p className="text-2xl font-bold text-orange-600">
+                                {message.data.restaurants?.restaurants?.length || 0}
+                              </p>
+                              <p className="text-xs text-gray-600">Restaurants</p>
+                            </div>
+                            <div className="text-center p-2 bg-purple-50 rounded-lg">
+                              <p className="text-2xl font-bold text-purple-600">
+                                {(message.data.colleagues?.count || 0) + (message.data.linkedIn?.count || 0)}
+                              </p>
+                              <p className="text-xs text-gray-600">Connections</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              ))}
+              
+              {/* Loading Animation */}
+              {isLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-white shadow-md border rounded-2xl px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <Bot className="w-5 h-5 text-blue-600" />
+                      <div className="flex space-x-1">
+                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Input Area */}
+          <div className="bg-white/80 backdrop-blur-sm border-t border-gray-200 p-4">
+            <div className="flex gap-3">
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                placeholder="Ask about flights, hotels, restaurants, or set preferences..."
+                className="flex-1 px-4 py-3 bg-white border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                disabled={isLoading}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={isLoading || !input.trim()}
+                className="px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2 font-medium"
+              >
+                <Send className="w-4 h-4" />
+                Send
+              </button>
+            </div>
+            
+            {/* Quick Actions */}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {[
+                "Plan trip to London",
+                "Hotels under $200/night",
+                "Find vegetarian restaurants",
+                "Show flight options"
+              ].map((suggestion, index) => (
+                <button
+                  key={index}
+                  onClick={() => setInput(suggestion)}
+                  className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700 transition-colors"
+                  disabled={isLoading}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Expanded Dashboard Section */}
+        {expandedDashboard !== null && messages[expandedDashboard]?.data && (
+          <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50">
+            <div className="mb-4 flex justify-end">
+              <button
+                onClick={() => setExpandedDashboard(null)}
+                className="flex items-center gap-2 px-3 py-1 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm"
+              >
+                <Minimize2 className="w-4 h-4" />
+                Minimize
+              </button>
+            </div>
+            <TravelDashboard 
+              data={messages[expandedDashboard].data}
+              destination={messages[expandedDashboard].data.calendar?.destination}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

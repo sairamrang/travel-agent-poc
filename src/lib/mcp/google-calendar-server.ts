@@ -104,7 +104,7 @@ export class GoogleCalendarMCPServer {
 
   private isTravelEvent(summary: string, description: string, location: string): boolean {
     const travelKeywords = [
-      'travel', 'trip', 'flight', 'conference', 'summit', 'meeting',
+      'travel', 'trip', 'flight', 'conference', 'summit',
       'visit', 'vacation', 'business trip', 'convention', 'workshop',
       'training', 'seminar', 'client meeting', 'site visit', 'demo',
       // Add more flexible keywords

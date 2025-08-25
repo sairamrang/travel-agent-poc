@@ -1,15 +1,21 @@
 import Amadeus from 'amadeus';
 
+// ============================================================================
+// TYPES & INTERFACES
+// ============================================================================
+
 export interface FlightOffer {
   id: string;
   airline: string;
   departure: {
     airport: string;
     time: string;
+    terminal?: string;
   };
   arrival: {
     airport: string;
     time: string;
+    terminal?: string;
   };
   duration: string;
   price: {
@@ -17,6 +23,8 @@ export interface FlightOffer {
     currency: string;
   };
   stops: number;
+  segments: number;
+  bookingClass: string;
 }
 
 export interface FlightSearchResult {
@@ -28,18 +36,115 @@ export interface FlightSearchResult {
   searchTime: string;
 }
 
-export class AmadeusFlightMCPServer {
-    private amadeus: any;
+export interface FlightSearchParams {
+  origin: string;
+  destination: string;
+  departureDate: string;
+  returnDate?: string;
+  adults?: number;
+  maxResults?: number;
+}
 
-    constructor() {
-        this.amadeus = new Amadeus({
-        clientId: process.env.AMADEUS_CLIENT_ID!,
-        clientSecret: process.env.AMADEUS_CLIENT_SECRET!,
-        hostname: 'test' // Use test environment
-        });
+export interface AmadeusApiResponse {
+  tool: string;
+  status: 'success' | 'error';
+  flights?: FlightOffer[];
+  error?: string;
+  searchParams?: FlightSearchParams;
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const AIRPORT_CODES: Record<string, string> = {
+  'london': 'LHR',
+  'new york': 'JFK',
+  'san francisco': 'SFO',
+  'tokyo': 'NRT',
+  'singapore': 'SIN',
+  'paris': 'CDG',
+  'berlin': 'BER',
+  'sydney': 'SYD',
+  'dubai': 'DXB',
+  'amsterdam': 'AMS',
+  'los angeles': 'LAX',
+  'miami': 'MIA',
+  'nyc': 'JFK',
+  'la': 'LAX',
+  'sf': 'SFO'
+};
+
+const AIRLINE_NAMES: Record<string, string> = {
+  'BA': 'British Airways',
+  'VS': 'Virgin Atlantic',
+  'AA': 'American Airlines',
+  'UA': 'United Airlines',
+  'LH': 'Lufthansa',
+  'AF': 'Air France',
+  'KL': 'KLM',
+  'SQ': 'Singapore Airlines',
+  'JL': 'Japan Airlines',
+  'NH': 'ANA',
+  'DL': 'Delta Air Lines',
+  'EK': 'Emirates',
+  'QR': 'Qatar Airways',
+  'IB': 'Iberia',
+  'LX': 'Swiss International',
+  'OS': 'Austrian Airlines',
+  'SN': 'Brussels Airlines'
+};
+
+const ROUTE_BASE_PRICES: Record<string, number> = {
+  'JFK-LHR': 650, 'JFK-CDG': 680, 'JFK-BER': 720,
+  'JFK-NRT': 850, 'JFK-SIN': 950, 'JFK-SYD': 1200,
+  'LHR-JFK': 650, 'CDG-JFK': 680, 'BER-JFK': 720,
+  'LHR-CDG': 120, 'LHR-BER': 150, 'CDG-BER': 180
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+class AmadeusUtils {
+  static getAirportCode(cityOrCode: string): string {
+    const city = cityOrCode.toLowerCase().trim();
+    
+    // If it's already an airport code (3 letters), return as-is
+    if (cityOrCode.length === 3 && /^[A-Z]+$/.test(cityOrCode.toUpperCase())) {
+      return cityOrCode.toUpperCase();
     }
+    
+    return AIRPORT_CODES[city] || 'LHR'; // Default to London Heathrow
+  }
 
-    async searchFlights(
+  static getAirlineName(carrierCode: string): string {
+    return AIRLINE_NAMES[carrierCode] || `${carrierCode} Airlines`;
+  }
+
+  static getBasePriceForRoute(origin: string, destination: string): number {
+    const routeKey = `${origin}-${destination}`;
+    return ROUTE_BASE_PRICES[routeKey] || 750; // Default price
+  }
+}
+
+// ============================================================================
+// MAIN AMADEUS SERVER CLASS
+// ============================================================================
+
+export class AmadeusFlightMCPServer {
+  private amadeus: any;
+  private readonly maxResults: number = 10;
+
+  constructor() {
+    this.amadeus = new Amadeus({
+      clientId: process.env.AMADEUS_CLIENT_ID!,
+      clientSecret: process.env.AMADEUS_CLIENT_SECRET!,
+      hostname: process.env.AMADEUS_HOSTNAME || 'test'
+    });
+  }
+
+  async searchFlights(
         origin: string,
         destination: string,
         departureDate: string,
@@ -103,27 +208,31 @@ export class AmadeusFlightMCPServer {
                 
                 return {
                 id: offer.id || `real-flight-${index}`,
-                airline: this.getAirlineName(segment.carrierCode),
+                airline: AmadeusUtils.getAirlineName(segment.carrierCode),
                 departure: {
                     airport: segment.departure.iataCode,
-                    time: segment.departure.at
+                    time: segment.departure.at,
+                    terminal: segment.departure.terminal || 'N/A'
                 },
                 arrival: {
                     airport: segment.arrival.iataCode,
-                    time: segment.arrival.at
+                    time: segment.arrival.at,
+                    terminal: segment.arrival.terminal || 'N/A'
                 },
                 duration: itinerary.duration,
                 price: {
                     total: offer.price.total,
                     currency: offer.price.currency
                 },
-                stops: itinerary.segments.length - 1
+                stops: itinerary.segments.length - 1,
+                segments: itinerary.segments.length,
+                bookingClass: offer.travelerPricings?.[0]?.fareDetailsBySegment?.[0]?.cabin || 'Economy'
                 };
             } catch (offerError) {
                 console.error(`Error processing offer ${index + 1}:`, offerError);
                 return null;
             }
-            }).filter(offer => offer !== null);
+            }).filter((offer): offer is FlightOffer => offer !== null);
     
             if (offers.length > 0) {
             console.log('✅ Successfully processed', offers.length, 'real flight offers');
@@ -143,10 +252,10 @@ export class AmadeusFlightMCPServer {
         }
         } catch (error) {
         console.error('❌ Amadeus API error:', {
-            message: error.message,
-            code: error.code,
-            description: error.description,
-            status: error.status
+            message: error instanceof Error ? error.message : 'Unknown error',
+            code: (error as any)?.code,
+            description: (error as any)?.description,
+            status: (error as any)?.status
         });
         }
         

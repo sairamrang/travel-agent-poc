@@ -5,13 +5,315 @@ import { GoogleCalendarMCPServer } from '@/lib/mcp/google-calendar-server';
 import { MockCompanyMCPServer, MockLinkedInMCPServer } from '@/lib/mcp/mock-servers';
 import { TimezoneReasoningEngine } from '@/lib/reasoning/timezone-engine';
 import { RecommendationEngine } from '@/lib/reasoning/recommendation-engine';
-import { MCPCoordinator } from '@/lib/mcp/mcp-coordinator'; // NEW MCP IMPORT
+import { MCPCoordinator } from '@/lib/mcp/mcp-coordinator';
 
+// ============= NEW CONTEXT MANAGEMENT SYSTEM =============
+interface UserPreferences {
+  budget?: {
+    restaurants?: { min?: number; max?: number; perPerson?: boolean };
+    hotels?: { min?: number; max?: number; perNight?: boolean };
+    flights?: { max?: number; class?: string };
+  };
+  loyalty?: {
+    airlines?: string[];
+    hotels?: string[];
+  };
+  dietary?: string[];
+  cuisine?: string[];
+  hotelAmenities?: string[];
+}
+
+interface ConversationContext {
+  currentTrip?: {
+    origin?: string;
+    destination?: string;
+    startDate?: string;
+    endDate?: string;
+    travelers?: number;
+  };
+  preferences: UserPreferences;
+  lastSearches?: {
+    flights?: any;
+    hotels?: any;
+    restaurants?: any;
+  };
+}
+
+class ContextManager {
+  private context: ConversationContext;
+
+  constructor(initialContext?: ConversationContext) {
+    this.context = initialContext || { preferences: {} };
+  }
+
+  extractPreferences(message: string): Partial<UserPreferences> {
+    const preferences: Partial<UserPreferences> = {};
+    const lowerMessage = message.toLowerCase();
+
+    // Extract price preferences
+    const pricePatterns = [
+      /(?:less than|under|max|maximum)\s*\$?(\d+)(?:\s*per\s*person)?/i,
+      /\$?(\d+)\s*(?:per person|pp)/i,
+      /budget.*\$?(\d+)/i,
+    ];
+
+    for (const pattern of pricePatterns) {
+      const match = message.match(pattern);
+      if (match) {
+        const amount = parseInt(match[1]);
+        const perPerson = lowerMessage.includes('per person') || lowerMessage.includes('pp');
+        
+        if (lowerMessage.includes('restaurant') || lowerMessage.includes('dinner') || lowerMessage.includes('lunch')) {
+          preferences.budget = {
+            ...preferences.budget,
+            restaurants: { max: amount, perPerson }
+          };
+        } else if (lowerMessage.includes('hotel') || lowerMessage.includes('stay')) {
+          preferences.budget = {
+            ...preferences.budget,
+            hotels: { max: amount, perNight: true }
+          };
+        } else if (lowerMessage.includes('flight')) {
+          preferences.budget = {
+            ...preferences.budget,
+            flights: { max: amount }
+          };
+        }
+      }
+    }
+
+    // Extract hotel chain preferences
+    const hotelChains = {
+      'marriott': ['marriott', 'bonvoy', 'ritz', 'westin', 'sheraton'],
+      'hilton': ['hilton', 'honors', 'conrad', 'waldorf', 'doubletree'],
+      'hyatt': ['hyatt', 'park hyatt', 'grand hyatt', 'andaz'],
+      'ihg': ['ihg', 'intercontinental', 'holiday inn', 'crowne plaza'],
+    };
+
+    for (const [brand, keywords] of Object.entries(hotelChains)) {
+      if (keywords.some(keyword => lowerMessage.includes(keyword))) {
+        if (!preferences.loyalty) preferences.loyalty = {};
+        if (!preferences.loyalty.hotels) preferences.loyalty.hotels = [];
+        preferences.loyalty.hotels.push(brand);
+      }
+    }
+
+    // Extract airline preferences
+    const airlines = ['united', 'american', 'delta', 'southwest', 'jetblue', 'alaska'];
+    const foundAirlines = airlines.filter(airline => lowerMessage.includes(airline));
+    if (foundAirlines.length > 0) {
+      if (!preferences.loyalty) preferences.loyalty = {};
+      preferences.loyalty.airlines = foundAirlines;
+    }
+
+    // Extract dietary preferences
+    const dietaryKeywords = ['vegetarian', 'vegan', 'gluten-free', 'halal', 'kosher'];
+    const foundDietary = dietaryKeywords.filter(diet => lowerMessage.includes(diet));
+    if (foundDietary.length > 0) {
+      preferences.dietary = foundDietary;
+    }
+
+    // Extract cuisine preferences
+    const cuisineTypes = ['italian', 'mexican', 'chinese', 'japanese', 'thai', 'indian', 'french'];
+    const foundCuisine = cuisineTypes.filter(cuisine => lowerMessage.includes(cuisine));
+    if (foundCuisine.length > 0) {
+      preferences.cuisine = foundCuisine;
+    }
+
+    // Extract hotel amenities
+    const amenities = ['pool', 'gym', 'spa', 'parking', 'wifi', 'breakfast', 'pet-friendly'];
+    const foundAmenities = amenities.filter(amenity => lowerMessage.includes(amenity));
+    if (foundAmenities.length > 0) {
+      preferences.hotelAmenities = foundAmenities;
+    }
+
+    return preferences;
+  }
+
+  updateContext(message: string) {
+    const newPreferences = this.extractPreferences(message);
+    this.context.preferences = this.mergePreferences(this.context.preferences, newPreferences);
+    
+    console.log('📊 Updated preferences:', this.context.preferences);
+  }
+
+  private mergePreferences(existing: UserPreferences, newPrefs: Partial<UserPreferences>): UserPreferences {
+    return {
+      ...existing,
+      ...newPrefs,
+      budget: {
+        ...existing.budget,
+        ...newPrefs.budget,
+        restaurants: { ...existing.budget?.restaurants, ...newPrefs.budget?.restaurants },
+        hotels: { ...existing.budget?.hotels, ...newPrefs.budget?.hotels },
+        flights: { ...existing.budget?.flights, ...newPrefs.budget?.flights },
+      },
+      loyalty: {
+        airlines: [...new Set([...(existing.loyalty?.airlines || []), ...(newPrefs.loyalty?.airlines || [])])],
+        hotels: [...new Set([...(existing.loyalty?.hotels || []), ...(newPrefs.loyalty?.hotels || [])])],
+      },
+      dietary: [...new Set([...(existing.dietary || []), ...(newPrefs.dietary || [])])],
+      cuisine: [...new Set([...(existing.cuisine || []), ...(newPrefs.cuisine || [])])],
+      hotelAmenities: [...new Set([...(existing.hotelAmenities || []), ...(newPrefs.hotelAmenities || [])])],
+    };
+  }
+
+  applyPreferencesToSearch(toolName: string, params: any): any {
+    const enhancedParams = { ...params };
+    
+    switch (toolName) {
+      case 'search_restaurants':
+        if (this.context.preferences.budget?.restaurants?.max) {
+          enhancedParams.maxPrice = this.context.preferences.budget.restaurants.max;
+          enhancedParams.perPerson = this.context.preferences.budget.restaurants.perPerson;
+        }
+        if (this.context.preferences.dietary?.length) {
+          enhancedParams.dietary = this.context.preferences.dietary;
+        }
+        if (this.context.preferences.cuisine?.length) {
+          enhancedParams.cuisine = this.context.preferences.cuisine;
+        }
+        break;
+      
+      case 'search_hotels':
+        if (this.context.preferences.budget?.hotels?.max) {
+          enhancedParams.maxPrice = this.context.preferences.budget.hotels.max;
+        }
+        if (this.context.preferences.loyalty?.hotels?.length) {
+          enhancedParams.preferredChains = this.context.preferences.loyalty.hotels;
+        }
+        if (this.context.preferences.hotelAmenities?.length) {
+          enhancedParams.amenities = this.context.preferences.hotelAmenities;
+        }
+        break;
+      
+      case 'search_flights':
+        if (this.context.preferences.budget?.flights?.max) {
+          enhancedParams.maxPrice = this.context.preferences.budget.flights.max;
+        }
+        if (this.context.preferences.loyalty?.airlines?.length) {
+          enhancedParams.preferredAirlines = this.context.preferences.loyalty.airlines;
+        }
+        if (this.context.preferences.budget?.flights?.class) {
+          enhancedParams.travelClass = this.context.preferences.budget.flights.class;
+        }
+        break;
+    }
+    
+    return enhancedParams;
+  }
+
+  filterResults(toolName: string, results: any): any {
+    if (!results || results.status !== 'success') return results;
+    
+    switch (toolName) {
+      case 'search_restaurants':
+        if (results.restaurants && this.context.preferences.budget?.restaurants?.max) {
+          const maxPrice = this.context.preferences.budget.restaurants.max;
+          const original = results.restaurants.length;
+          results.restaurants = results.restaurants.filter((r: any) => {
+            const price = this.context.preferences.budget?.restaurants?.perPerson ? 
+              r.pricePerPerson : r.averagePrice;
+            return !price || price <= maxPrice;
+          });
+          console.log(`🍽️ Filtered restaurants: ${original} → ${results.restaurants.length} (max $${maxPrice})`);
+        }
+        break;
+      
+      case 'search_hotels':
+        if (results.hotels) {
+          const original = results.hotels.length;
+          
+          // Filter by price
+          if (this.context.preferences.budget?.hotels?.max) {
+            results.hotels = results.hotels.filter((h: any) => 
+              !h.price || h.price <= this.context.preferences.budget!.hotels!.max!
+            );
+          }
+          
+          // Prioritize preferred chains
+          if (this.context.preferences.loyalty?.hotels?.length) {
+            results.hotels.sort((a: any, b: any) => {
+              const aPreferred = this.context.preferences.loyalty!.hotels!.some(chain =>
+                a.name?.toLowerCase().includes(chain.toLowerCase())
+              );
+              const bPreferred = this.context.preferences.loyalty!.hotels!.some(chain =>
+                b.name?.toLowerCase().includes(chain.toLowerCase())
+              );
+              if (aPreferred && !bPreferred) return -1;
+              if (!aPreferred && bPreferred) return 1;
+              return 0;
+            });
+          }
+          
+          console.log(`🏨 Filtered hotels: ${original} → ${results.hotels.length}`);
+        }
+        break;
+      
+      case 'search_flights':
+        if (results.flights && this.context.preferences.loyalty?.airlines?.length) {
+          // Sort preferred airlines to the top
+          results.flights.sort((a: any, b: any) => {
+            const aPreferred = this.context.preferences.loyalty!.airlines!.some(airline =>
+              a.airline?.toLowerCase().includes(airline.toLowerCase())
+            );
+            const bPreferred = this.context.preferences.loyalty!.airlines!.some(airline =>
+              b.airline?.toLowerCase().includes(airline.toLowerCase())
+            );
+            if (aPreferred && !bPreferred) return -1;
+            if (!aPreferred && bPreferred) return 1;
+            return 0;
+          });
+        }
+        break;
+    }
+    
+    return results;
+  }
+
+  getContext(): ConversationContext {
+    return this.context;
+  }
+
+  generatePreferenceSummary(): string {
+    const parts = [];
+    
+    if (this.context.preferences.budget?.restaurants?.max) {
+      parts.push(`Restaurant budget: $${this.context.preferences.budget.restaurants.max}${this.context.preferences.budget.restaurants.perPerson ? ' per person' : ''}`);
+    }
+    if (this.context.preferences.budget?.hotels?.max) {
+      parts.push(`Hotel budget: $${this.context.preferences.budget.hotels.max} per night`);
+    }
+    if (this.context.preferences.loyalty?.hotels?.length) {
+      parts.push(`Preferred hotels: ${this.context.preferences.loyalty.hotels.join(', ')}`);
+    }
+    if (this.context.preferences.loyalty?.airlines?.length) {
+      parts.push(`Preferred airlines: ${this.context.preferences.loyalty.airlines.join(', ')}`);
+    }
+    if (this.context.preferences.dietary?.length) {
+      parts.push(`Dietary: ${this.context.preferences.dietary.join(', ')}`);
+    }
+    
+    return parts.length > 0 ? `Applying your preferences: ${parts.join('; ')}` : '';
+  }
+}
+
+// ============= MAIN ROUTE HANDLER =============
 export async function POST(request: NextRequest) {
   try {
-    const { message } = await request.json();
+    const { message, conversationContext } = await request.json();
     
-    console.log('🚀 Starting MCP-enabled travel planning for:', message);
+    console.log('🚀 === TRAVEL AGENT REQUEST START ===');
+    console.log('🚀 User message:', message);
+    
+    // Initialize context manager with existing context if provided
+    const contextManager = new ContextManager(conversationContext);
+    contextManager.updateContext(message);
+    
+    const preferenceSummary = contextManager.generatePreferenceSummary();
+    if (preferenceSummary) {
+      console.log('🎯 ' + preferenceSummary);
+    }
     
     // Initialize MCP Coordinator and other servers
     const mcpCoordinator = new MCPCoordinator();
@@ -40,7 +342,6 @@ export async function POST(request: NextRequest) {
         console.log('🔗 Attempting to connect to Google Calendar with valid session...');
         const calendarMCP = new GoogleCalendarMCPServer(session.accessToken as string);
         
-        // Use extracted dates if available, otherwise use default 15-day range
         const timeMin = extractedContext.startDate ? new Date(extractedContext.startDate).toISOString() : undefined;
         const timeMax = extractedContext.endDate ? new Date(extractedContext.endDate).toISOString() : undefined;
         
@@ -57,7 +358,6 @@ export async function POST(request: NextRequest) {
         console.error('❌ Calendar MCP error:', error instanceof Error ? error.message : 'Unknown error');
         console.log('🔄 Continuing with message extraction due to calendar auth error');
         calendarStatus = `Connected but auth error - using message extraction`;
-        // Don't throw here, continue with extraction
         travelContext = null;
       }
     } else {
@@ -124,7 +424,8 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // Step 5: Call Claude with MCP Tools instead of direct API calls
+    // Step 5: Call Claude with MCP Tools with context awareness
+    console.log('🎯 === ORCHESTRATION MODE: CLAUDE + MCP TOOLS WITH CONTEXT ===');
     const mcpEnabledResponse = await callClaudeWithMCPTools({
       message,
       travelContext,
@@ -133,17 +434,19 @@ export async function POST(request: NextRequest) {
       userEmail: session?.user?.email,
       mcpCoordinator,
       companyMCP,
-      linkedInMCP
+      linkedInMCP,
+      contextManager // Pass context manager to apply preferences
     });
 
-    console.log('✅ MCP-enabled travel plan generated');
+    console.log('✅ Claude orchestrated travel plan generated successfully with user preferences');
 
     // Simulate AI processing time
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     return NextResponse.json({
       response: mcpEnabledResponse.content,
-      travelPlan: mcpEnabledResponse.data
+      travelPlan: mcpEnabledResponse.data,
+      conversationContext: contextManager.getContext() // Return updated context
     });
     
   } catch (error) {
@@ -163,318 +466,293 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// NEW: MCP-enabled Claude integration
-// Replace the callClaudeWithMCPTools function in your agent route
-
+// Updated callClaudeWithMCPTools function with context awareness
 async function callClaudeWithMCPTools(context: any) {
-  const { message, travelContext, timezoneAnalysis, calendarStatus, userEmail, mcpCoordinator, companyMCP, linkedInMCP } = context;
+  const { 
+    message, 
+    travelContext, 
+    timezoneAnalysis, 
+    calendarStatus, 
+    userEmail, 
+    mcpCoordinator, 
+    companyMCP, 
+    linkedInMCP,
+    contextManager // NEW: Context manager for preferences
+  } = context;
   
-  const mcpTools = mcpCoordinator.getAvailableTools();
+  console.log('🚀 Executing MCP tools with user preferences...');
+  
+  let toolResults = {};
+  
+  // Execute MCP tool calls with preference-enhanced parameters
+  if (travelContext.destination && travelContext.startDate) {
+    
+    // Flight search with preferences
+    try {
+      console.log('🔧 Direct MCP: Flight search with preferences...');
+      
+      const cleanDestination = extractCityFromText(travelContext.destination);
+      console.log(`📍 Parsed destination: "${travelContext.destination}" → "${cleanDestination}"`);
+      
+      let flightParams = {
+        origin: 'NYC',
+        destination: cleanDestination,
+        departureDate: travelContext.startDate.split('T')[0],
+        returnDate: travelContext.endDate ? travelContext.endDate.split('T')[0] : undefined
+      };
+      
+      // Apply preferences
+      flightParams = contextManager.applyPreferencesToSearch('search_flights', flightParams);
+      
+      console.log('✈️ Flight search params with preferences:', flightParams);
+      
+      let flightResult = await mcpCoordinator.executeToolCall('search_flights', flightParams);
+      
+      // Filter results based on preferences
+      flightResult = contextManager.filterResults('search_flights', flightResult);
+      
+      toolResults.search_flights = flightResult;
+      console.log('✅ Flight search result status:', flightResult.status);
+      
+    } catch (error) {
+      console.error('❌ Flight search failed:', error.message);
+      toolResults.search_flights = { 
+        status: 'error', 
+        error: error.message,
+        tool: 'search_flights'
+      };
+    }
 
-  // Simplified, more direct prompt that encourages tool use
-  const systemPrompt = `You are a travel assistant with access to these tools:
-1. search_flights - Search for flights between cities
-2. search_hotels - Find hotels in destination cities  
-3. search_restaurants - Find restaurants for business dining
+    // Hotel search with preferences
+    try {
+      console.log('🔧 Direct MCP: Hotel search with preferences...');
+      
+      let hotelParams = {
+        destination: extractCityFromText(travelContext.destination),
+        checkIn: travelContext.startDate.split('T')[0],
+        checkOut: travelContext.endDate ? travelContext.endDate.split('T')[0] : travelContext.startDate.split('T')[0]
+      };
+      
+      // Apply preferences
+      hotelParams = contextManager.applyPreferencesToSearch('search_hotels', hotelParams);
+      
+      console.log('🏨 Hotel search params with preferences:', hotelParams);
+      
+      let hotelResult = await mcpCoordinator.executeToolCall('search_hotels', hotelParams);
+      
+      // Filter results based on preferences
+      hotelResult = contextManager.filterResults('search_hotels', hotelResult);
+      
+      toolResults.search_hotels = hotelResult;
+      console.log('✅ Hotel search result status:', hotelResult.status);
+      
+    } catch (error) {
+      console.error('❌ Hotel search failed:', error.message);
+      toolResults.search_hotels = { 
+        status: 'error', 
+        error: error.message,
+        tool: 'search_hotels'
+      };
+    }
 
-TRAVEL REQUEST: User wants to travel to ${travelContext.destination} from ${travelContext.startDate} to ${travelContext.endDate}
+    // Restaurant search with preferences
+    try {
+      console.log('🔧 Direct MCP: Restaurant search with preferences...');
+      
+      let restaurantParams = {
+        destination: extractCityFromText(travelContext.destination)
+      };
+      
+      // Apply preferences
+      restaurantParams = contextManager.applyPreferencesToSearch('search_restaurants', restaurantParams);
+      
+      console.log('🍽️ Restaurant search params with preferences:', restaurantParams);
+      
+      let restaurantResult = await mcpCoordinator.executeToolCall('search_restaurants', restaurantParams);
+      
+      // Filter results based on preferences
+      restaurantResult = contextManager.filterResults('search_restaurants', restaurantResult);
+      
+      toolResults.search_restaurants = restaurantResult;
+      console.log('✅ Restaurant search result status:', restaurantResult.status);
+      
+    } catch (error) {
+      console.error('❌ Restaurant search failed:', error.message);
+      toolResults.search_restaurants = { 
+        status: 'error', 
+        error: error.message,
+        tool: 'search_restaurants'
+      };
+    }
+  }
 
-IMPORTANT: Always use the available tools when the user asks for flights, hotels, or restaurants. Don't just describe what you would do - actually use the tools.
-
-For this request, you should:
-1. Use search_flights to find flights to ${travelContext.destination}
-2. Use search_hotels to find accommodation  
-3. Use search_restaurants to find dining options
-
-Use the tools now to help with this travel request.`;
-
+  // Weather forecast and packing recommendations
   try {
-    console.log('🤖 Calling Claude with MCP tools...');
+    console.log('🔧 Direct MCP: Weather forecast and packing...');
     
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY!,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'tools-2024-04-04'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: `${message}\n\nPlease use your available tools to search for flights, hotels, and restaurants for my trip to ${travelContext.destination}.`
-          }
-        ],
-        tools: mcpTools,
-        tool_choice: { type: "auto" }
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Claude API error: ${response.status} ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    console.log('🤖 Claude response received:', result);
-    
-    // Execute MCP tool calls
-    let toolsUsed = [];
-    let toolResults = {};
-    
-    if (result.content) {
-      for (const content of result.content) {
-        if (content.type === 'tool_use') {
-          console.log(`🔧 Executing MCP tool: ${content.name} with params:`, content.input);
-          try {
-            const toolResult = await mcpCoordinator.executeToolCall(content.name, content.input);
-            console.log(`✅ Tool ${content.name} result:`, toolResult);
-            toolsUsed.push({
-              name: content.name,
-              input: content.input,
-              result: toolResult
-            });
-            toolResults[content.name] = toolResult;
-          } catch (toolError) {
-            console.error(`❌ Tool ${content.name} failed:`, toolError);
-            toolResults[content.name] = {
-              status: 'error',
-              error: toolError.message
-            };
-          }
-        }
-      }
-    } else {
-      console.log('⚠️ No content in Claude response, forcing tool calls...');
-      
-      // Force tool calls if Claude didn't use them
-      if (travelContext.destination && travelContext.startDate) {
-        console.log('🔧 Forcing flight search...');
-        try {
-          const flightResult = await mcpCoordinator.executeToolCall('search_flights', {
-            origin: 'NYC',
-            destination: travelContext.destination,
-            departureDate: travelContext.startDate.split('T')[0],
-            returnDate: travelContext.endDate ? travelContext.endDate.split('T')[0] : undefined
-          });
-          toolResults.search_flights = flightResult;
-          console.log('✅ Forced flight search result:', flightResult);
-        } catch (error) {
-          console.error('❌ Forced flight search failed:', error);
-          toolResults.search_flights = { status: 'error', error: error.message };
-        }
-
-        console.log('🔧 Forcing hotel search...');
-        try {
-          const hotelResult = await mcpCoordinator.executeToolCall('search_hotels', {
-            destination: travelContext.destination,
-            checkIn: travelContext.startDate.split('T')[0],
-            checkOut: travelContext.endDate ? travelContext.endDate.split('T')[0] : undefined
-          });
-          toolResults.search_hotels = hotelResult;
-          console.log('✅ Forced hotel search result:', hotelResult);
-        } catch (error) {
-          console.error('❌ Forced hotel search failed:', error);
-          toolResults.search_hotels = { status: 'error', error: error.message };
-        }
-
-        console.log('🔧 Forcing restaurant search...');
-        try {
-          const restaurantResult = await mcpCoordinator.executeToolCall('search_restaurants', {
-            destination: travelContext.destination
-          });
-          toolResults.search_restaurants = restaurantResult;
-          console.log('✅ Forced restaurant search result:', restaurantResult);
-        } catch (error) {
-          console.error('❌ Forced restaurant search failed:', error);
-          toolResults.search_restaurants = { status: 'error', error: error.message };
-        }
-      }
-    }
-
-    // Get colleagues and LinkedIn connections (keep existing logic)
-    let colleagueResult = { colleagues: [] };
-    let connectionResult = { connections: [] };
-    
-    if (travelContext.destination) {
-      try {
-        colleagueResult.colleagues = await companyMCP.findColleagues(travelContext.destination);
-        connectionResult.connections = await linkedInMCP.findConnections(travelContext.destination);
-      } catch (error) {
-        console.error('❌ Error finding colleagues/connections:', error);
-      }
-    }
-
-    // Generate final response with tool results
-    let finalResponseText = '';
-    
-    if (toolsUsed.length > 0 || Object.keys(toolResults).length > 0) {
-      const toolSummary = Object.entries(toolResults).map(([toolName, result]) => {
-        if (result.status === 'success') {
-          switch (toolName) {
-            case 'search_flights':
-              return `✈️ Found ${result.flights?.length || 0} flight options`;
-            case 'search_hotels':
-              return `🏨 Found ${result.hotels?.length || 0} hotel options`;
-            case 'search_restaurants':
-              return `🍽️ Found ${result.restaurants?.length || 0} restaurant options`;
-            default:
-              return `${toolName}: Success`;
-          }
-        } else {
-          return `${toolName}: ${result.error || 'Failed'}`;
-        }
-      }).join('\n');
-
-      finalResponseText = `Great! I found travel options for your trip to ${travelContext.destination}:\n\n${toolSummary}\n\nI've searched for flights, hotels, and restaurants using the MCP tools. Check the detailed results below!`;
-    } else {
-      finalResponseText = extractTextContent(result) || `I understand you want to travel to ${travelContext.destination}. I'm working on finding the best options for you!`;
-    }
-
-    return {
-      content: finalResponseText,
-      data: {
-        calendar: {
-          status: calendarStatus,
-          events: travelContext.events || [],
-          destination: travelContext.destination,
-          purpose: travelContext.purpose,
-          startDate: travelContext.startDate,
-          endDate: travelContext.endDate,
-          timezoneAnalysis
-        },
-        flights: toolResults.search_flights || { status: 'not_searched', message: 'No flight search performed via MCP' },
-        hotels: toolResults.search_hotels || { status: 'not_searched', message: 'No hotel search performed via MCP' },
-        restaurants: toolResults.search_restaurants || { status: 'not_searched', message: 'No restaurant search performed via MCP' },
-        colleagues: {
-          status: 'success',
-          count: colleagueResult.colleagues?.length || 0,
-          list: colleagueResult.colleagues || []
-        },
-        linkedIn: {
-          status: 'success',
-          count: connectionResult.connections?.length || 0,
-          list: connectionResult.connections || []
-        },
-        searchTime: new Date().toISOString(),
-        authenticationStatus: context.userEmail ? 'authenticated' : 'not_authenticated',
-        intelligenceLevel: 'mcp_enabled',
-        mcpArchitecture: true,
-        toolsExecuted: Object.keys(toolResults)
-      }
+    const weatherParams = {
+      destination: extractCityFromText(travelContext.destination),
+      startDate: travelContext.startDate.split('T')[0],
+      endDate: travelContext.endDate ? travelContext.endDate.split('T')[0] : travelContext.startDate.split('T')[0],
+      units: 'celsius' as const
     };
-
+    
+    console.log('🌤️ Weather search params:', weatherParams);
+    
+    const weatherResult = await mcpCoordinator.executeToolCall('weather_forecast', weatherParams);
+    toolResults.weather_forecast = weatherResult;
+    console.log('✅ Weather search result status:', weatherResult.status);
+    
+    // Generate packing recommendations based on weather
+    if (weatherResult.status === 'success') {
+      const packingParams = {
+        destination: extractCityFromText(travelContext.destination),
+        weatherForecast: weatherResult.forecast.daily,
+        tripPurpose: 'business' as const,
+        duration: Math.ceil((new Date(travelContext.endDate || travelContext.startDate).getTime() - new Date(travelContext.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1
+      };
+      
+      console.log('🧳 Packing params:', packingParams);
+      
+      const packingResult = await mcpCoordinator.executeToolCall('packing_recommendations', packingParams);
+      toolResults.packing_recommendations = packingResult;
+      console.log('✅ Packing recommendations status:', packingResult.status);
+    }
+    
   } catch (error) {
-    console.error('❌ Claude MCP call failed:', error);
-    
-    // Fallback: Force tool execution even if Claude fails
-    const fallbackResults = {};
-    
-    if (travelContext.destination && travelContext.startDate) {
-      console.log('🔄 Fallback: Executing tools directly...');
-      
-      try {
-        fallbackResults.search_flights = await mcpCoordinator.executeToolCall('search_flights', {
-          origin: 'NYC',
-          destination: travelContext.destination,
-          departureDate: travelContext.startDate.split('T')[0],
-          returnDate: travelContext.endDate ? travelContext.endDate.split('T')[0] : undefined
-        });
-      } catch (e) {
-        fallbackResults.search_flights = { status: 'error', error: e.message };
-      }
-
-      try {
-        fallbackResults.search_hotels = await mcpCoordinator.executeToolCall('search_hotels', {
-          destination: travelContext.destination,
-          checkIn: travelContext.startDate.split('T')[0],
-          checkOut: travelContext.endDate ? travelContext.endDate.split('T')[0] : undefined
-        });
-      } catch (e) {
-        fallbackResults.search_hotels = { status: 'error', error: e.message };
-      }
-
-      try {
-        fallbackResults.search_restaurants = await mcpCoordinator.executeToolCall('search_restaurants', {
-          destination: travelContext.destination
-        });
-      } catch (e) {
-        fallbackResults.search_restaurants = { status: 'error', error: e.message };
-      }
-    }
-    
-    return {
-      content: `I found travel options for your trip to ${travelContext.destination} using MCP tools (fallback mode due to Claude API issue).`,
-      data: {
-        calendar: { status: calendarStatus, events: travelContext.events || [], timezoneAnalysis },
-        flights: fallbackResults.search_flights || { status: 'error', error: 'MCP integration failed' },
-        hotels: fallbackResults.search_hotels || { status: 'error', error: 'MCP integration failed' },
-        restaurants: fallbackResults.search_restaurants || { status: 'error', error: 'MCP integration failed' },
-        intelligenceLevel: 'fallback_mode',
-        toolsExecuted: Object.keys(fallbackResults)
-      }
+    console.error('❌ Weather/packing search failed:', error.message);
+    toolResults.weather_forecast = { 
+      status: 'error', 
+      error: error.message,
+      tool: 'weather_forecast'
     };
   }
-}
 
-// Helper function for Claude's final response
-async function getClaudeFinalResponse(systemPrompt: string, originalMessage: string, toolResults: any[], additionalData: any) {
-  const toolSummary = toolResults.map(tool => 
-    `${tool.name}: ${JSON.stringify(tool.result, null, 2)}`
-  ).join('\n\n');
-
-  const additionalInfo = `
-COLLEAGUES: ${additionalData.colleagues?.length || 0} found
-LINKEDIN CONNECTIONS: ${additionalData.connections?.length || 0} found
-TIMEZONE ANALYSIS: ${additionalData.timezoneAnalysis?.conflictCount || 0} conflicts detected
-`;
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY!,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 4000,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: `${originalMessage}\n\nMCP Tool Results:\n${toolSummary}\n\nAdditional Data:\n${additionalInfo}\n\nPlease provide a comprehensive travel recommendation based on this data, addressing timezone conflicts and highlighting the best options.`
-        }
-      ]
-    })
-  });
-
-  return await response.json();
-}
-
-// Helper function to extract text from Claude response
-function extractTextContent(claudeResponse: any): string {
-  if (claudeResponse.content) {
-    return claudeResponse.content
-      .filter((c: any) => c.type === 'text')
-      .map((c: any) => c.text)
-      .join('\n');
+  // Get colleagues and LinkedIn connections
+  let colleagueResult = { colleagues: [] };
+  let connectionResult = { connections: [] };
+  
+  if (travelContext.destination) {
+    try {
+      colleagueResult.colleagues = await companyMCP.findColleagues(travelContext.destination);
+      connectionResult.connections = await linkedInMCP.findConnections(travelContext.destination);
+    } catch (error) {
+      console.error('❌ Error finding colleagues/connections:', error);
+    }
   }
-  return claudeResponse.message || 'No response generated';
+
+  // Generate response with preference acknowledgment
+  const preferenceSummary = contextManager.generatePreferenceSummary();
+  const toolSummary = Object.entries(toolResults).map(([toolName, result]) => {
+    if (result.status === 'success') {
+      switch (toolName) {
+        case 'search_flights':
+          return `✈️ Found ${result.flights?.length || 0} flight options${contextManager.getContext().preferences.loyalty?.airlines?.length ? ' (prioritizing your preferred airlines)' : ''}`;
+        case 'search_hotels':
+          return `🏨 Found ${result.hotels?.length || 0} hotel options${contextManager.getContext().preferences.budget?.hotels?.max ? ` under $${contextManager.getContext().preferences.budget.hotels.max}/night` : ''}`;
+        case 'search_restaurants':
+          return `🍽️ Found ${result.restaurants?.length || 0} restaurant options${contextManager.getContext().preferences.budget?.restaurants?.max ? ` under $${contextManager.getContext().preferences.budget.restaurants.max}${contextManager.getContext().preferences.budget.restaurants.perPerson ? ' per person' : ''}` : ''}`;
+        default:
+          return `${toolName}: Success`;
+      }
+    } else {
+      return `${toolName}: ${result.error || 'Failed'}`;
+    }
+  }).join('\n');
+
+  const responseText = `Perfect! I found travel options for your trip to ${extractCityFromText(travelContext.destination)}${preferenceSummary ? `. ${preferenceSummary}` : ''}:\n\n${toolSummary}\n\nI've applied your preferences to filter and prioritize the results. Check the detailed options below!`;
+
+  return {
+    content: responseText,
+    data: {
+      calendar: {
+        status: calendarStatus,
+        events: travelContext.events || [],
+        destination: travelContext.destination,
+        purpose: travelContext.purpose,
+        startDate: travelContext.startDate,
+        endDate: travelContext.endDate,
+        timezoneAnalysis
+      },
+      flights: toolResults.search_flights || { status: 'not_searched', message: 'No flight search performed' },
+      hotels: toolResults.search_hotels || { status: 'not_searched', message: 'No hotel search performed' },
+      restaurants: toolResults.search_restaurants || { status: 'not_searched', message: 'No restaurant search performed' },
+      colleagues: {
+        status: 'success',
+        count: colleagueResult.colleagues?.length || 0,
+        list: colleagueResult.colleagues || []
+      },
+      linkedIn: {
+        status: 'success',
+        count: connectionResult.connections?.length || 0,
+        list: connectionResult.connections || []
+      },
+      weather: toolResults.weather_forecast || { status: 'not_searched' },
+      packing: toolResults.packing_recommendations || { status: 'not_searched' },
+      searchTime: new Date().toISOString(),
+      authenticationStatus: context.userEmail ? 'authenticated' : 'not_authenticated',
+      intelligenceLevel: 'context_aware_mcp',
+      mcpArchitecture: true,
+      toolsExecuted: Object.keys(toolResults),
+      appliedPreferences: contextManager.getContext().preferences,
+      claudeStatus: 'bypassed_due_to_404'
+    }
+  };
+}
+
+// Helper function to extract city names from text
+function extractCityFromText(text: string): string {
+  const cityMappings = {
+    'london': 'London',
+    'new york': 'New York',
+    'nyc': 'New York', 
+    'san francisco': 'San Francisco',
+    'sf': 'San Francisco',
+    'paris': 'Paris',
+    'tokyo': 'Tokyo',
+    'singapore': 'Singapore',
+    'berlin': 'Berlin',
+    'sydney': 'Sydney',
+    'los angeles': 'Los Angeles',
+    'la': 'Los Angeles',
+    'miami': 'Miami',
+    'chicago': 'Chicago',
+    'boston': 'Boston',
+    'seattle': 'Seattle',
+    'amsterdam': 'Amsterdam',
+    'madrid': 'Madrid',
+    'rome': 'Rome',
+    'dubai': 'Dubai'
+  };
+
+  const cleanText = text.toLowerCase().trim();
+  
+  for (const [key, value] of Object.entries(cityMappings)) {
+    if (cleanText.includes(key)) {
+      return value;
+    }
+  }
+  
+  const words = text.split(' ');
+  const cityWords = words.filter(word => {
+    const clean = word.replace(/[^a-zA-Z]/g, '');
+    return clean.length > 2 && /^[A-Z]/.test(clean);
+  });
+  
+  if (cityWords.length > 0) {
+    return cityWords[0].replace(/[^a-zA-Z]/g, '');
+  }
+  
+  return 'London';
 }
 
 // Helper function to extract travel info from user message
 function extractTravelFromMessage(message: string): any {
   const lowerMessage = message.toLowerCase();
   
-  // Extract destination
   const cities = ['london', 'new york', 'san francisco', 'tokyo', 'singapore', 'berlin', 'paris', 'sydney'];
   const foundCity = cities.find(city => lowerMessage.includes(city));
   
-  // Extract time references
   const timeKeywords = {
     'next month': new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     'next week': new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -497,57 +775,4 @@ function extractTravelFromMessage(message: string): any {
     events: [],
     extractedFromMessage: true
   };
-}
-
-// Enhanced fallback response (in case Claude API fails)
-function generateEnhancedFallbackResponse(message: string, travelPlan: any): string {
-  const { calendar, flights, colleagues, linkedIn } = travelPlan;
-  
-  let response = '';
-  
-  // Calendar section with auth status awareness and timezone intelligence
-  if (calendar.events && calendar.events.length > 0) {
-    const event = calendar.events[0];
-    response += `Perfect! I found your "${event.summary}" in your calendar for ${calendar.destination}. `;
-    
-    // Add timezone intelligence
-    if (calendar.timezoneAnalysis && calendar.timezoneAnalysis.conflictCount > 0) {
-      response += `I detected ${calendar.timezoneAnalysis.conflictCount} timezone conflicts that need attention. `;
-      if (calendar.timezoneAnalysis.highSeverityCount > 0) {
-        response += `${calendar.timezoneAnalysis.highSeverityCount} are high priority. `;
-      }
-    } else if (calendar.timezoneAnalysis) {
-      response += `Good news - no timezone conflicts detected! `;
-    }
-  } else if (calendar.status && calendar.status.includes('Not authenticated')) {
-    response += `I'd love to check your calendar for travel events! Please connect your Google Calendar, then I can find your specific trips and analyze timezone conflicts. For now, I understand you're planning to travel to ${calendar.destination}. `;
-  } else if (calendar.status && calendar.status.includes('auth error')) {
-    response += `I had trouble accessing your calendar (authentication issue), but based on your message, I understand you're planning to travel to ${calendar.destination}. `;
-  } else {
-    response += `I checked your calendar but didn't find specific travel events. Based on your message, I understand you're planning to travel to ${calendar.destination}. `;
-  }
-  
-  // Flight section with MCP status
-  if (flights.status === 'success' && flights.flights && flights.flights.length > 0) {
-    const bestFlight = flights.flights[0];
-    response += `I found ${flights.flights.length} flight options via MCP! The best value is ${bestFlight.airline} for $${bestFlight.price.total}. `;
-  } else if (flights.status === 'not_searched') {
-    response += `I'm ready to search for flights using the new MCP architecture. `;
-  } else {
-    response += `Flight search via MCP encountered an issue, but I can help you find alternatives. `;
-  }
-  
-  // Colleagues section
-  if (colleagues && colleagues.count > 0) {
-    response += `I found ${colleagues.count} colleagues in your destination. `;
-  }
-  
-  // LinkedIn section
-  if (linkedIn && linkedIn.count > 0) {
-    response += `Plus ${linkedIn.count} LinkedIn connections who you might want to meet with. `;
-  }
-  
-  response += `I can help you book flights and schedule meetings using the new MCP tools - what would you like to do next?`;
-  
-  return response;
 }
