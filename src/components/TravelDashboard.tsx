@@ -283,6 +283,78 @@ export default function TravelDashboard({ data, destination = "your destination"
               </div>
             </div>
 
+            {/* Connections Section */}
+            {(data?.colleagues?.list?.length > 0 || data?.linkedIn?.list?.length > 0) && (
+              <div className="bg-white rounded-lg p-6 shadow-sm">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-blue-600" />
+                  People to Meet in {destination}
+                </h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Company Colleagues */}
+                  {data?.colleagues?.list?.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                        <Briefcase className="w-4 h-4 text-purple-600" />
+                        Company Colleagues ({data.colleagues.count})
+                      </h4>
+                      <div className="space-y-2">
+                        {data.colleagues.list.slice(0, 5).map((colleague: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
+                            <div>
+                              <p className="font-medium text-gray-900">{colleague.name}</p>
+                              <p className="text-sm text-gray-600">{colleague.role}</p>
+                              {colleague.department && (
+                                <p className="text-xs text-purple-600 mt-1">{colleague.department}</p>
+                              )}
+                            </div>
+                            {colleague.lastContact && (
+                              <span className="text-xs text-gray-500">
+                                Last contact: {colleague.lastContact}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* LinkedIn Connections */}
+                  {data?.linkedIn?.list?.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-blue-600" />
+                        LinkedIn Connections ({data.linkedIn.count})
+                      </h4>
+                      <div className="space-y-2">
+                        {data.linkedIn.list.slice(0, 5).map((connection: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                            <div>
+                              <p className="font-medium text-gray-900">{connection.name}</p>
+                              <p className="text-sm text-gray-600">{connection.role}</p>
+                              <p className="text-xs text-blue-600 mt-1">{connection.company}</p>
+                            </div>
+                            {connection.mutual && (
+                              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                {connection.mutual} mutual
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {(data?.colleagues?.count > 5 || data?.linkedIn?.count > 5) && (
+                  <p className="text-sm text-gray-500 mt-4 text-center">
+                    Showing top 5 connections. {data?.colleagues?.count + data?.linkedIn?.count} total connections available.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Timezone Conflicts */}
             {data?.calendar?.timezoneAnalysis?.conflicts?.length > 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
